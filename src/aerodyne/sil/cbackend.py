@@ -217,3 +217,141 @@ def c_encode(p: TelemetryPacket) -> bytes:
 def firmware_version() -> tuple[str, str]:
     lib = load()
     return lib.aero_fw_version().decode(), lib.aero_fw_commit().decode()
+
+
+# ---------------------------------------------------------------------------
+# Full C flight application (firmware/src/aero_app.c)
+# ---------------------------------------------------------------------------
+
+_SLOTS = ("imu_accel", "imu_gyro", "baro", "gnss", "battery", "temperature")
+
+
+class _Input(C.Structure):
+    _fields_ = [("present", C.c_bool), ("sequence", C.c_uint32), ("timestamp", C.c_double),
+                ("v", C.c_double * 3), ("status", C.c_int), ("quality", C.c_float)]
+
+
+def _load_app(lib: C.CDLL) -> None:
+    if getattr(lib, "_app_ready", False):
+        return
+    vp = C.c_void_p
+    lib.aero_app_sizeof.restype = C.c_size_t
+    lib.aero_app_nv_sizeof.restype = C.c_size_t
+    lib.aero_app_init.argtypes = [vp, vp, vp]
+    lib.aero_app_command.argtypes = [vp, C.c_int, C.c_bool]
+    lib.aero_app_report_storage.argtypes = [vp, C.c_bool]
+    lib.aero_app_step.argtypes = [vp, C.c_double, C.POINTER(_Input), C.POINTER(_Tlm)]
+    lib.aero_app_step.restype = C.c_bool
+    for name, rt in (("aero_app_state", C.c_int), ("aero_app_last_reason", C.c_int),
+                     ("aero_app_faults", C.c_uint32), ("aero_app_max_est_alt", C.c_float),
+                     ("aero_app_boot_count", C.c_uint32), ("aero_app_nv", vp),
+                     ("aero_app_nv_dirty", C.c_bool)):
+        getattr(lib, name).argtypes = [vp]
+        getattr(lib, name).restype = rt
+    lib.aero_app_health.argtypes = [vp, C.c_int]
+    lib.aero_app_health.restype = C.c_int
+    lib._app_ready = True
+
+
+class _FsmView:
+    """Read-only view with the attributes SILRunner inspects."""
+
+    def __init__(self, app: "CFlightApp") -> None:
+        self._app = app
+        self.transitions: list[Transition] = []
+
+    @property
+    def state(self) -> FlightState:
+        return FlightState(self._app.lib.aero_app_state(self._app._buf))
+
+
+class CFlightApp:
+    """Drop-in replacement for :class:`aerodyne.avionics.fsw.FlightSoftware`
+    that runs the complete C application cycle. Raw-data logging stays on the
+    host side (as the logging task would), and storage failures are reported
+    back to the application."""
+
+    def __init__(self, cfg, logger, nv_store: dict) -> None:
+        self.lib = load()
+        _load_app(self.lib)
+        self.log = logger
+        self.nv = nv_store
+        self._buf = C.create_string_buffer(self.lib.aero_app_sizeof())
+        self._nv_size = self.lib.aero_app_nv_sizeof()
+        nv_bytes = nv_store.get("c_app_nv")
+        nv_buf = C.create_string_buffer(nv_bytes, self._nv_size) if nv_bytes else None
+        self.lib.aero_app_init(self._buf, None, nv_buf)
+        self.fsm = _FsmView(self)
+        self._pending: tuple[int, bool] | None = None
+        self._save_nv()
+        nv_store["boot_count"] = int(self.lib.aero_app_boot_count(self._buf))
+
+    def _save_nv(self) -> None:
+        self.nv["c_app_nv"] = C.string_at(self.lib.aero_app_nv(self._buf), self._nv_size)
+
+    def command(self, cmd: str, preflight_ok: bool = False) -> None:
+        self.lib.aero_app_command(self._buf, _CMDS.get(cmd, 0), preflight_ok)
+
+    @property
+    def max_est_alt(self) -> float:
+        return float(self.lib.aero_app_max_est_alt(self._buf))
+
+    @property
+    def faults(self) -> set[str]:
+        bits = self.lib.aero_app_faults(self._buf)
+        out = set()
+        if bits & 1:
+            out.add("low_battery")
+        if bits & 2:
+            out.add("storage")
+        for i, name in enumerate(_SLOTS):
+            if bits & (1 << (8 + i)):
+                out.add(f"sensor:{name}")
+        return out
+
+    def step(self, t: float, readings: dict) -> TelemetryPacket | None:
+        from aerodyne.avionics.logger import StorageError
+        from aerodyne.avionics.sensors import Health
+
+        arr = (_Input * len(_SLOTS))()
+        for i, name in enumerate(_SLOTS):
+            r = readings.get(name)
+            if r is None:
+                continue
+            vals = r.value if isinstance(r.value, tuple) else (r.value,)
+            arr[i].present = True
+            arr[i].sequence = r.sequence
+            arr[i].timestamp = r.timestamp
+            for k, v in enumerate(vals[:3]):
+                arr[i].v[k] = float(v)
+            arr[i].status = int(r.status)
+            arr[i].quality = r.quality
+        before = self.fsm.state
+        pkt = _Tlm()
+        due = self.lib.aero_app_step(self._buf, t, arr, C.byref(pkt))
+        after = self.fsm.state
+        if after != before:
+            self.fsm.transitions.append(Transition(
+                t, before, after, _REASONS.get(self.lib.aero_app_last_reason(self._buf), "?")))
+        # logging task: raw samples with the health the application assigned
+        for i, name in enumerate(_SLOTS):
+            r = readings.get(name)
+            if r is None:
+                continue
+            try:
+                self.log.log_raw(r.timestamp, r.sensor_id, r.value, r.status.name,
+                                 Health(self.lib.aero_app_health(self._buf, i)).name)
+            except StorageError:
+                self.lib.aero_app_report_storage(self._buf, False)
+        if self.lib.aero_app_nv_dirty(self._buf):
+            self._save_nv()
+        if not due:
+            return None
+        return TelemetryPacket(
+            vehicle_id=pkt.vehicle_id, flight_id=pkt.flight_id, sequence=pkt.sequence,
+            timestamp_ms=pkt.timestamp_ms, altitude=pkt.altitude, velocity=pkt.velocity,
+            acceleration=pkt.acceleration, latitude=pkt.lat_e7 / 1e7, longitude=pkt.lon_e7 / 1e7,
+            attitude=tuple(x / 32767 for x in pkt.attitude), battery_mv=pkt.battery_mv,
+            temperature_c=pkt.temperature_c10 / 10, system_status=pkt.system_status,
+            sensor_status=pkt.sensor_status, nav_status=pkt.nav_status, gnss_fix=pkt.gnss_fix,
+            gnss_sats=pkt.gnss_sats)

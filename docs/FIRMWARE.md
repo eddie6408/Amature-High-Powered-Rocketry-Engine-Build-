@@ -28,6 +28,7 @@ validator scores each and the navigation layer uses the healthy ones.
 | Flight state machine | `aero_fsm.[ch]` |
 | Telemetry | `aero_telemetry.[ch]` |
 | Identity / versioning | `aero_version.[ch]` (commit + build time injected by CMake) |
+| Application cycle (100 Hz) | `aero_app.[ch]`: validate → level/attitude → Kalman → FSM → health → telemetry; NV state for reset recovery |
 | RTOS task table | `aero_tasks.h` |
 
 The core is pure C11 with no allocation or I/O, built with
@@ -77,6 +78,15 @@ Every build carries version, build timestamp and commit hash; the image
 SHA-256 and configuration SHA-256 are computed at release. The ground station
 and `run_preflight` compare them to the expected identity; any mismatch is
 `NOT READY`. All five values are stored in each flight record.
+
+## Verification
+
+* `firmware/tests/test_firmware.c` - host unit tests (FSM, filter, telemetry, validator, app arming, reset recovery, stuck-sensor detection).
+* `aerodyne sil --all-faults --backend c-app` - the complete C application flies all 14 fault scenarios through the Python SIL harness (ctypes); `pytest` runs the same.
+* The C state machine and telemetry encoder are also checked transition-for-transition and byte-for-byte against the Python reference.
+
+Known difference from the Python reference: the C validator has no median/MAD
+outlier test yet (spikes are caught by the rate-of-change check).
 
 ## Porting to hardware (next steps)
 

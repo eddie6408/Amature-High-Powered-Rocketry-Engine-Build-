@@ -18,7 +18,7 @@ endif()
 string(TIMESTAMP AERO_BUILD_TIME "%Y-%m-%dT%H:%M:%SZ" UTC)
 
 # Portable flight-software core: pure logic, no RTOS or hardware dependencies.
-set(CORE_SOURCES src/aero_fsm.c src/aero_kalman.c src/aero_telemetry.c src/aero_sensor.c
+set(CORE_SOURCES src/aero_fsm.c src/aero_kalman.c src/aero_telemetry.c src/aero_sensor.c src/aero_app.c
                  src/aero_version.c)
 
 add_library(aerodyne_core STATIC ${CORE_SOURCES})

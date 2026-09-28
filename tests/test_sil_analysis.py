@@ -51,6 +51,25 @@ def test_c_flight_software_matches_reference(nominal_sim, scenario):
 
 
 @needs_c
+@pytest.mark.parametrize("scenario", sorted(STANDARD_SCENARIOS))
+def test_full_c_application(nominal_sim, scenario):
+    """The complete C flight application (firmware/src/aero_app.c) flies every scenario."""
+    r = SILRunner(nominal_sim, STANDARD_SCENARIOS[scenario], backend="c-app").run()
+    assert r.evaluate() == [], scenario
+    assert r.final_state == "LANDED"
+    if scenario == "processor_reset_coast":
+        assert r.boots == 2
+    expected_fault = {"imu_failure_coast": "sensor:imu_accel", "baro_failure_boost": "sensor:baro",
+                      "gnss_loss": "sensor:gnss", "low_battery": "low_battery",
+                      "storage_failure": "storage"}.get(scenario)
+    if expected_fault:
+        assert expected_fault in r.faults_detected
+    if scenario == "nominal":
+        assert r.faults_detected == []
+        assert r.est_apogee == pytest.approx(r.true_apogee, rel=0.02)
+
+
+@needs_c
 def test_c_telemetry_bytes_identical():
     p = TelemetryPacket(7, 3, 123456, 98765, 1234.5, -12.25, 9.5, 35.1234567, -117.7654321,
                         (0.7071, 0.0, 0.7071, 0.0), 8123, -4.5, 4, 0xBEEF, 7, 3, 11)

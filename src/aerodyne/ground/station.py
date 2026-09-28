@@ -30,6 +30,7 @@ class VehicleStatus:
     gnss_sats: int = 0
     sensor_health: dict[str, str] = field(default_factory=dict)
     last_packet_time: float | None = None
+    nav_status: int = 0
     max_altitude_m: float = 0.0
 
 
@@ -44,14 +45,37 @@ def gnss_quality(fix: int, sats: int) -> tuple[str, float]:
     return "GOOD", 4.0
 
 
+@dataclass(frozen=True)
+class DescentPlan:
+    """Planned recovery profile (from the digital twin's recovery config)."""
+
+    main_deploy_alt_agl: float
+    main_descent_rate: float        # m/s, positive
+
+    @classmethod
+    def from_recovery(cls, config, mass: float, density: float = 1.2) -> "DescentPlan | None":
+        from aerodyne.recovery.recovery import descent_rate
+
+        mains = [d for d in config.devices if d.deploy_event == "altitude" and d.deploy_altitude_agl]
+        if not mains:
+            return None
+        main = mains[0]
+        cda = config.body_cd_area + sum(d.cd_area for d in config.devices)
+        return cls(main.deploy_altitude_agl, descent_rate(mass, cda, density))
+
+
 class GroundStation:
-    def __init__(self, vehicle_id: int | None = None, link_timeout: float = 2.0) -> None:
+    def __init__(self, vehicle_id: int | None = None, link_timeout: float = 2.0,
+                 descent_plan: DescentPlan | None = None) -> None:
+        self.plan = descent_plan
         self.rx = TelemetryReceiver(vehicle_id=vehicle_id, link_timeout=link_timeout)
         self.status = VehicleStatus()
         self.launch_position: tuple[float, float] | None = None
         self.track: list[tuple[float, float, float, float]] = []    # (t, lat, lon, alt)
         self.history: list[TelemetryPacket] = []
         self.now = 0.0
+        self.descent_t0: float | None = None     # vehicle time of the first DESCENT packet
+        self.estimate_note = ""
 
     def feed(self, data: bytes, now: float) -> int:
         self.now = now
@@ -72,8 +96,11 @@ class GroundStation:
         s.temperature_c = p.temperature_c
         s.attitude = p.attitude
         s.gnss_fix, s.gnss_sats = p.gnss_fix, p.gnss_sats
+        s.nav_status = p.nav_status
         s.sensor_health = {k: Health(v).name for k, v in unpack_sensor_status(p.sensor_status).items()}
         s.last_packet_time = now
+        if s.state == "DESCENT" and self.descent_t0 is None:
+            self.descent_t0 = p.timestamp_ms / 1000.0
         if p.gnss_fix >= 2:
             if self.launch_position is None and p.system_status <= int(FlightState.ARMED):
                 self.launch_position = (p.latitude, p.longitude)
@@ -90,23 +117,63 @@ class GroundStation:
         return (math.radians(lon - lon0) * EARTH_R * math.cos(math.radians(lat0)),
                 math.radians(lat - lat0) * EARTH_R)
 
-    def landing_estimate(self) -> dict[str, float | str] | None:
-        """Extrapolate current horizontal drift to the ground during DESCENT."""
-        if self.status.state != "DESCENT" or len(self.track) < 5 or not self.status.velocity_mps:
+    def landing_estimate(self, window: float = 5.0) -> dict[str, float | str] | None:
+        """Extrapolate the recent horizontal drift to the ground during DESCENT.
+
+        Drift velocity is a least-squares fit over the last ``window`` seconds of
+        GNSS track; the radius combines GNSS noise propagated through the fit and
+        extrapolation with an allowance for wind changing with altitude."""
+        self.estimate_note = ""
+        if self.status.state != "DESCENT" or not self.track or not self.status.velocity_mps:
             return None
-        (t0, la0, lo0, _), (t1, la1, lo1, alt) = self.track[-5], self.track[-1]
-        if t1 <= t0 or self.status.velocity_mps >= -0.5:
+        if not self.status.nav_status & 1:
+            # altitude/velocity are not barometer-aided (baro degraded): an inertial-only
+            # estimate drifts without bound, so no time-to-ground can be trusted
+            self.estimate_note = "landing estimate unavailable: altitude not baro-aided"
             return None
-        e0, n0 = self._en(la0, lo0)
-        e1, n1 = self._en(la1, lo1)
-        ve, vn = (e1 - e0) / (t1 - t0), (n1 - n0) / (t1 - t0)
-        t_ground = alt / -self.status.velocity_mps
+        if self.status.velocity_mps >= -0.5:
+            return None
+        t_last = self.track[-1][0]
+        # drift is fitted only once descent has settled: fixes from the coast and the
+        # first seconds under the drogue describe the ascent, not the wind drift
+        settle = (self.descent_t0 or t_last) + 2.0
+        pts = [p for p in self.track if t_last - p[0] <= window and p[0] >= settle]
+        if len(pts) < 10 or pts[-1][0] - pts[0][0] < 0.6 * window:
+            return None
+        ts = [p[0] for p in pts]
+        en = [self._en(p[1], p[2]) for p in pts]
+        tm = sum(ts) / len(ts)
+        sxx = sum((t - tm) ** 2 for t in ts)
+        ve = sum((t - tm) * e for t, (e, _) in zip(ts, en)) / sxx
+        vn = sum((t - tm) * n for t, (_, n) in zip(ts, en)) / sxx
+        e_now = sum(e for e, _ in en) / len(en) + ve * (t_last - tm)
+        n_now = sum(n for _, n in en) / len(en) + vn * (t_last - tm)
+        alt = max(self.track[-1][3], 0.0)
+        v_now = -self.status.velocity_mps
+        basis = "current descent rate"
+        if self.plan and v_now > 1.5 * self.plan.main_descent_rate:
+            # main not yet open (or still inflating): fast down to the deploy altitude,
+            # then the planned main rate
+            h = self.plan.main_deploy_alt_agl
+            t_ground = max(alt - h, 0.0) / v_now + min(alt, h) / self.plan.main_descent_rate
+            t_spread = 0.25 * h / self.plan.main_descent_rate    # main-rate uncertainty
+            basis = "descent plan"
+        elif self.plan is None:
+            # no plan: the vehicle may still slow down (main opening/inflating) - bracket
+            # between the current rate and the slowest plausible main canopy
+            t_fast, t_slow = alt / v_now, alt / min(v_now, 3.0)
+            t_ground, t_spread = 0.5 * (t_fast + t_slow), 0.5 * (t_slow - t_fast) + 0.1 * t_fast
+            basis = "PRELIMINARY (no descent plan)" if v_now > 8.0 else "current descent rate, no plan"
+        else:
+            t_ground, t_spread = alt / v_now, 0.1 * alt / v_now
         label, sigma = gnss_quality(self.status.gnss_fix, self.status.gnss_sats)
-        # uncertainty grows with extrapolation time (wind changes with altitude)
-        radius = 2 * sigma + 0.3 * t_ground * math.hypot(ve, vn) + 10.0
-        return {"east_m": e1 + ve * t_ground, "north_m": n1 + vn * t_ground,
+        sigma_v = sigma / math.sqrt(sxx)                 # 1-sigma of fitted drift speed
+        drift = math.hypot(ve, vn)
+        radius = (2.0 * math.hypot(sigma, sigma_v * t_ground) + drift * t_spread
+                  + 0.3 * t_ground * drift + 10.0)
+        return {"east_m": e_now + ve * t_ground, "north_m": n_now + vn * t_ground,
                 "radius_m": radius, "time_to_ground_s": t_ground, "gnss_quality": label,
-                "kind": "ESTIMATED"}
+                "basis": basis, "kind": "ESTIMATED"}
 
     def render(self) -> str:
         s = self.status
@@ -121,7 +188,8 @@ class GroundStation:
             f"lost: {self.rx.stats.lost}  crc: {self.rx.stats.crc_failures}  "
             f"dup: {self.rx.stats.duplicates}  late: {self.rx.stats.out_of_order}",
             f"  state: {s.state}",
-            f"  altitude: {f(s.altitude_m, '.0f')} m   (max {s.max_altitude_m:.0f} m)",
+            f"  altitude: {f(None if s.altitude_m is None else s.altitude_m + 0.0, '.0f')} m   "
+            f"(max {s.max_altitude_m:.0f} m)",
             f"  velocity: {f(s.velocity_mps, '.1f')} m/s   accel: {f(s.acceleration_mps2, '.1f')} m/s²",
             f"  battery: {f(s.battery_v, '.2f')} V   temp: {f(s.temperature_c, '.1f')} °C",
             f"  GPS: {label} ({s.gnss_sats} sats, ±{sigma:.0f} m)" if math.isfinite(sigma)
@@ -135,7 +203,9 @@ class GroundStation:
         est = self.landing_estimate()
         if est:
             lines.append(f"  est. landing: {est['east_m']:.0f} m E, {est['north_m']:.0f} m N "
-                         f"(±{est['radius_m']:.0f} m, {est['time_to_ground_s']:.0f} s) [ESTIMATED]")
+                         f"(±{est['radius_m']:.0f} m, {est['time_to_ground_s']:.0f} s, {est['basis']}) [ESTIMATED]")
+        if self.estimate_note:
+            lines.append(f"  {self.estimate_note}")
         bad = [k for k, v in s.sensor_health.items() if v not in ("OK",)]
         lines.append("  sensors: " + ("all OK" if not bad else
                                       ", ".join(f"{k}={s.sensor_health[k]}" for k in bad)))

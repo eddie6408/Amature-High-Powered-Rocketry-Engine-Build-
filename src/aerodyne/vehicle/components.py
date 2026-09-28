@@ -267,3 +267,32 @@ class MotorSlot(Component):
     def inertia_per_mass(self) -> tuple[float, float]:
         r = self.motor_diameter / 2
         return 0.5 * r ** 2, (3 * r ** 2 + self.motor_length ** 2) / 12
+
+
+@dataclass
+class CadPart(Component):
+    """Part whose mass properties come from CAD (STL mesh x density, or a CAD
+    mass-property report). ESTIMATED unless ``mass_override`` is set."""
+
+    cad_mass: float = 0.0
+    cad_cg: float = 0.0            # absolute station, m
+    cad_ixx: float = 0.0           # kg m^2 about own CG
+    cad_iyy: float = 0.0
+    length_: float = 0.0
+    source: str = ""
+    source_sha256: str = ""
+
+    @property
+    def length(self) -> float:
+        return self.length_
+
+    def estimated_mass(self) -> float:
+        return self.cad_mass
+
+    def local_cg(self) -> float:
+        return self.cad_cg - self.x
+
+    def inertia_per_mass(self) -> tuple[float, float]:
+        if self.cad_mass <= 0:
+            return (0.0, 0.0)
+        return self.cad_ixx / self.cad_mass, self.cad_iyy / self.cad_mass

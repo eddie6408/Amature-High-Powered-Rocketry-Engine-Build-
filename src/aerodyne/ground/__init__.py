@@ -2,6 +2,6 @@
 flight track, landing estimate). UI front-ends (terminal, web) sit on top of
 :class:`GroundStation`."""
 
-from aerodyne.ground.station import GroundStation, VehicleStatus
+from aerodyne.ground.station import DescentPlan, GroundStation, VehicleStatus
 
-__all__ = ["GroundStation", "VehicleStatus"]
+__all__ = ["DescentPlan", "GroundStation", "VehicleStatus"]

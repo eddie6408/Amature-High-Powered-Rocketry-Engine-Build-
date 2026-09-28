@@ -38,6 +38,7 @@ class SILResult:
     logger: FlightDataLogger
     boots: int
     faults_injected: list[FaultInjection] = field(default_factory=list)
+    radio_frames: list[tuple[float, bytes]] = field(default_factory=list)  # raw bytes as received
 
     def transition_time(self, to_state: str) -> float | None:
         return next((t for t, _, s, _ in self.transitions if s == to_state), None)
@@ -67,6 +68,16 @@ class SILResult:
                 true_land - 1.0 <= t_land <= true_land + landed_deadline):
             issues.append(f"landing detected at {t_land:.2f}s, truth {true_land:.2f}s")
         return issues
+
+
+def make_flight_software(backend: str, cfg: FswConfig, logger: FlightDataLogger, nv: dict):
+    """backend: "python" (reference), "c" (Python cycle with the C state machine and
+    filter), or "c-app" (the complete C application cycle, firmware/src/aero_app.c)."""
+    if backend == "c-app":
+        from aerodyne.sil.cbackend import CFlightApp
+
+        return CFlightApp(cfg, logger, nv)
+    return FlightSoftware(cfg, logger, nv, backend=backend)
 
 
 class SILRunner:
@@ -127,9 +138,10 @@ class SILRunner:
         vs = VirtualSensors(self.sim, self.noise, seed=self.seed)
         nv: dict = {}
         logger = FlightDataLogger()
-        fsw = FlightSoftware(self.fsw_config, logger, nv, backend=self.backend)
+        fsw = make_flight_software(self.backend, self.fsw_config, logger, nv)
         rx = TelemetryReceiver(vehicle_id=self.fsw_config.vehicle_id)
         received: list[TelemetryPacket] = []
+        radio_log: list[tuple[float, bytes]] = []
         in_flight_radio: list[tuple[float, bytes]] = []
         held: bytes | None = None
         transitions: list[tuple[float, str, str, str]] = []
@@ -151,7 +163,7 @@ class SILRunner:
                 if idx not in reset_done and t >= f.start:
                     reset_done.add(idx)
                     faults_seen |= fsw.faults
-                    fsw = FlightSoftware(self.fsw_config, logger, nv, backend=self.backend)
+                    fsw = make_flight_software(self.backend, self.fsw_config, logger, nv)
                     boot_blackout_until = t + 0.2
             logger.storage_ok = not any(f.kind == FaultKind.STORAGE_FAILURE and f.active(t)
                                         for f in self.faults)
@@ -183,9 +195,11 @@ class SILRunner:
                 if self.radio.reorder and rng.random() < self.radio.reorder and held is None:
                     held = frame
                     continue
+                radio_log.append((round(t, 4), frame))
                 for p, _ in rx.feed(frame, t):
                     received.append(p)
                 if held is not None:
+                    radio_log.append((round(t, 4), held))
                     for p, _ in rx.feed(held, t):
                         received.append(p)
                     held = None
@@ -197,7 +211,7 @@ class SILRunner:
             link={**rx.stats.__dict__, "loss_rate": rx.stats.packet_loss_rate},
             faults_detected=sorted(faults_seen), est_apogee=float(fsw.max_est_alt),
             true_apogee=truth_apogee, logger=logger, boots=int(nv.get("boot_count", 1)),
-            faults_injected=self.faults)
+            faults_injected=self.faults, radio_frames=radio_log)
 
     def _transmit(self, t: float, pkt: TelemetryPacket, rng: np.random.Generator,
                   queue: list[tuple[float, bytes]]) -> None:

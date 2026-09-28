@@ -30,8 +30,14 @@ pytest                                                    # full test suite
 aerodyne stability              # mass properties + static margin of the example vehicle
 aerodyne simulate               # 6-DOF flight simulation
 aerodyne montecarlo -n 100      # dispersion analysis (apogee, landing ellipse, ...)
-aerodyne sil --all-faults --backend c   # run the compiled C flight software against 14 fault scenarios
+aerodyne sil --all-faults --backend c-app   # fly the complete C flight application through 14 fault scenarios
 aerodyne demo                   # the full closed loop on synthetic flight data
+
+# ground station (web UI)
+(cd ground-ui && npm install && npm run build)
+aerodyne ground                 # http://127.0.0.1:8765 - replays a SIL flight (clearly marked SIMULATED)
+aerodyne ground --udp 5600 --record flight.cap   # live: raw radio bytes over UDP, recorded
+aerodyne ground --console       # text view, no browser needed
 ```
 
 The example vehicle (`AERODYNE-EX1`) flies a **synthetic, HYPOTHETICAL** motor
@@ -60,18 +66,21 @@ curve. It shows how the tools fit together; it is not a flight-ready design.
 | Telemetry protocol TELEMETRY-2 (CRC, loss/dup/reorder/corruption handling) | `aerodyne.avionics.telemetry`, `firmware/src/aero_telemetry.c` | ✅ byte-identical |
 | Flight data recorder (raw vs events vs estimates, SHA-256 chain) | `aerodyne.avionics.logger` | ✅ |
 | Firmware identity/integrity, automated preflight (READY / NOT READY) | `aerodyne.avionics.firmware`, `.preflight` | ✅ |
-| RTOS task table, HAL, firmware versioning | `firmware/include/aero_tasks.h`, `aero_hal.h`, `aero_version.h` | ✅ design + host build; no MCU port yet |
-| Software-in-the-loop with 11 fault types | `aerodyne.sil` | ✅ runs the compiled C code via ctypes |
+| Flight-software application cycle in C (validate → attitude → KF → FSM → health → telemetry, NV reset recovery) | `firmware/src/aero_app.c` | ✅ passes all SIL fault scenarios |
+| RTOS task table, HAL, firmware versioning | `firmware/include/aero_tasks.h`, `aero_hal.h`, `aero_version.h` | ✅ design + host build; no MCU port yet (no ARM toolchain/board) |
+| Software-in-the-loop with 11 fault types | `aerodyne.sil` | ✅ backends: `python`, `c` (C FSM + filter), `c-app` (complete C application) |
 | Hardware-in-the-loop | `aerodyne.sil.hil` | ⚠️ protocol + bridge only; needs hardware |
-| Ground station core (link stats, GPS quality, landing estimate) | `aerodyne.ground` | ✅ core + text view; React UI not yet |
+| Ground station core (link stats, GPS quality, landing estimate with honest radius) | `aerodyne.ground` | ✅ |
+| AERODYNE GROUND web UI (React + TypeScript, own TELEMETRY-2 decoder) | `ground-ui/` | ✅ live tiles, plots, ground track, sensor health, table view, light/dark |
+| Ground server (SSE relay, UDP/serial/SIL/capture sources, raw capture + SHA-256) | `aerodyne.ground.server` | ✅ |
 | Flight data ingestion + time normalization | `aerodyne.analysis.ingestion` | ✅ |
 | Post-flight reconstruction (KF + RTS smoother, phases) | `aerodyne.analysis.reconstruction` | ✅ |
 | Simulation vs reality, model-error "possible contributors" | `aerodyne.analysis.comparison`, `.model_error` | ✅ |
 | Generic test-stand data (raw/filtered/derived/uncertainty/plots) | `aerodyne.analysis.test_data` | ✅ |
 | Digital twin + post-flight validation + calibration proposals | `aerodyne.twin` | ✅ |
 | Reporting (Markdown) | `aerodyne.reporting` | ✅ |
-| CAD integration (STEP/STL/Fusion/SolidWorks/FreeCAD) | — | ⏳ planned; components accept measured mass/CG overrides and a `cad_reference` column exists |
-| OpenRocket `.ork` import | — | ⏳ planned (`.eng` motors and CSV aero tables already work) |
+| CAD integration: STL mesh mass properties, Fusion/SolidWorks/FreeCAD mass-property CSV | `aerodyne.cad` | ✅ STEP not yet (needs OpenCASCADE) |
+| OpenRocket `.ork` design import | `aerodyne.interop.openrocket` | ✅ tested against a hand-written fixture in the documented format; freeform fins/pods not supported (reported, never dropped silently) |
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for interfaces and data flow and
 [`docs/FIRMWARE.md`](docs/FIRMWARE.md) for the flight-computer design.
@@ -80,7 +89,8 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for interfaces and data flow 
 
 ```text
 src/aerodyne/     Python platform (engineering, simulation, analysis, SIL, ground)
-firmware/         C11 flight-software core, HAL/RTOS interfaces, host unit tests
+firmware/         C11 flight-software core + application, HAL/RTOS interfaces, host unit tests
+ground-ui/        AERODYNE GROUND web dashboard (React + TypeScript, Vitest)
 db/schema.sql     PostgreSQL engineering database
 docs/             architecture and firmware design
 tests/            pytest suite (includes C-vs-Python flight-software equivalence tests)

@@ -47,6 +47,28 @@ Recovery ┘                                           VirtualSensors (+ faults)
                               DigitalTwin.validate_against_flight / propose_* → next revision
 ```
 
+## Ground segment
+
+```text
+radio ──bytes──> aerodyne ground (server) ──SSE (raw bytes, base64)──> browser
+                     │ append-only capture + SHA-256 manifest          │ TELEMETRY-2 decode (TypeScript)
+                     └ sources: UDP | serial | SIL replay | capture     └ GroundStation state, plots, track
+```
+
+The server never decodes or filters: the browser sees corruption, duplicates
+and gaps exactly as received. Python (`aerodyne.ground.station`) and TypeScript
+(`ground-ui/src/station.ts`) implement the same receiver and landing-estimate
+algorithm; a shared fixture generated from a SIL run with corrupted packets
+(`python -m aerodyne.ground.fixtures`) is asserted by both test suites.
+
+Landing estimate: least-squares drift over the last 5 s of settled descent,
+time-to-ground from the descent plan (main deploy altitude and rate from the
+digital twin's recovery configuration) or, without a plan, bracketed between
+the current rate and a slow main. The radius combines GNSS noise propagated
+through the fit, descent-time uncertainty and a wind-shear allowance; in SIL
+the true landing point lies inside it throughout the descent. No estimate is
+shown when the altitude is not baro-aided.
+
 ## Model fidelity and known limitations
 
 * **Aerodynamics (analytical):** Barrowman normal force/CP, small-angle; drag

@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "aero_app.h"
 #include "aero_fsm.h"
 #include "aero_kalman.h"
 #include "aero_sensor.h"
@@ -208,8 +209,102 @@ static void test_task_table(void)
     }
 }
 
+static void pad_inputs(aero_input_t in[AERO_SLOT_COUNT], double t, double baro, double accel_x)
+{
+    /* real sensors always show LSB noise; a perfectly constant value is (correctly)
+     * flagged as a stuck sensor, so dither the synthetic inputs */
+    double d = 0.02 * sin(t * 977.0);
+    accel_x += d;
+    baro += 5.0 * d;
+    memset(in, 0, sizeof(aero_input_t) * AERO_SLOT_COUNT);
+    in[AERO_SLOT_ACCEL] = (aero_input_t){true, (uint32_t)(t * 100), t, {accel_x, 0.0, 0.0},
+                                         AERO_SENSOR_STATUS_OK, 1.0f};
+    in[AERO_SLOT_GYRO] = (aero_input_t){true, (uint32_t)(t * 100), t, {0.0, 0.0, 0.0},
+                                        AERO_SENSOR_STATUS_OK, 1.0f};
+    in[AERO_SLOT_BARO] = (aero_input_t){true, (uint32_t)(t * 100), t, {baro, 0.0, 0.0},
+                                        AERO_SENSOR_STATUS_OK, 1.0f};
+    in[AERO_SLOT_BATTERY] = (aero_input_t){true, (uint32_t)(t * 100), t, {8.1, 0.0, 0.0},
+                                           AERO_SENSOR_STATUS_OK, 1.0f};
+}
+
+static void test_app_arm_launch_and_reset(void)
+{
+    aero_app_t app;
+    aero_app_init(&app, NULL, NULL);
+    CHECK(aero_app_state(&app) == AERO_STATE_SAFE);
+    aero_input_t in[AERO_SLOT_COUNT];
+    aero_tlm_packet_t pkt;
+    double t = 0.0;
+    int frames = 0;
+    for (; t < 2.0; t += 0.01) {
+        if (fabs(t - 0.5) < 0.005) aero_app_command(&app, AERO_CMD_PREFLIGHT, false);
+        if (fabs(t - 1.0) < 0.005) aero_app_command(&app, AERO_CMD_ARM, true);
+        pad_inputs(in, t, 100.0, 9.81);
+        frames += aero_app_step(&app, t, in, &pkt);
+    }
+    CHECK(aero_app_state(&app) == AERO_STATE_ARMED);
+    CHECK(frames >= 19 && frames <= 21);           /* 10 Hz telemetry */
+    CHECK(pkt.system_status == AERO_STATE_ARMED);
+    uint8_t buf[AERO_TLM_FRAME_SIZE];
+    aero_tlm_packet_t back;
+    aero_tlm_encode(&pkt, buf);
+    CHECK(aero_tlm_decode(buf, sizeof buf, &back) == 0 && back.sequence == pkt.sequence);
+    /* boost: 8 g, baro climbing */
+    double alt = 0.0, vel = 0.0;
+    for (; t < 3.0; t += 0.01) {
+        vel += 70.0 * 0.01;
+        alt += vel * 0.01;
+        pad_inputs(in, t, 100.0 + alt, 80.0);
+        aero_app_step(&app, t, in, &pkt);
+    }
+    CHECK(aero_app_state(&app) == AERO_STATE_ASCENT);
+    /* processor reset: restart from the persisted NV state */
+    aero_nv_state_t nv = *aero_app_nv(&app);
+    aero_app_t app2;
+    aero_app_init(&app2, NULL, &nv);
+    CHECK(aero_app_state(&app2) == AERO_STATE_ASCENT);
+    CHECK(aero_app_boot_count(&app2) == 2);
+    /* a disarm command after the reset must not return to a ground state */
+    aero_app_command(&app2, AERO_CMD_DISARM, false);
+    pad_inputs(in, t, 100.0 + alt, 80.0);
+    aero_app_step(&app2, t, in, &pkt);
+    CHECK(aero_app_state(&app2) == AERO_STATE_ASCENT);
+    CHECK(pkt.sequence > nv.tlm_sequence - 1);     /* telemetry sequence continues */
+}
+
+static void test_app_sensor_failure_flagged(void)
+{
+    aero_app_t app;
+    aero_app_init(&app, NULL, NULL);
+    aero_input_t in[AERO_SLOT_COUNT];
+    for (double t = 0.0; t < 1.0; t += 0.01) {
+        pad_inputs(in, t, 100.0, 9.81);
+        if (t > 0.5) in[AERO_SLOT_BARO].status = AERO_SENSOR_STATUS_COMM_ERROR;
+        aero_app_step(&app, t, in, NULL);
+    }
+    CHECK(aero_app_health(&app, AERO_SLOT_BARO) == AERO_HEALTH_FAILED);
+    CHECK(aero_app_faults(&app) & (AERO_FAULT_SENSOR_BASE << AERO_SLOT_BARO));
+    CHECK(aero_app_health(&app, AERO_SLOT_ACCEL) == AERO_HEALTH_OK);
+}
+
+static void test_app_stuck_sensor_detected(void)
+{
+    aero_app_t app;
+    aero_app_init(&app, NULL, NULL);
+    aero_input_t in[AERO_SLOT_COUNT];
+    for (double t = 0.0; t < 1.0; t += 0.01) {
+        pad_inputs(in, t, 100.0, 9.81);
+        in[AERO_SLOT_ACCEL].v[0] = 9.81; /* frozen output */
+        aero_app_step(&app, t, in, NULL);
+    }
+    CHECK(aero_app_health(&app, AERO_SLOT_ACCEL) != AERO_HEALTH_OK);
+}
+
 int main(void)
 {
+    test_app_arm_launch_and_reset();
+    test_app_sensor_failure_flagged();
+    test_app_stuck_sensor_detected();
     test_fsm_nominal();
     test_fsm_spike_rejected();
     test_fsm_no_return_to_ground();
