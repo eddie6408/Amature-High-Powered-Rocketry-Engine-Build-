@@ -46,3 +46,10 @@ export function decimate<T>(pts: T[], value: (p: T) => number, maxPoints = 1500)
   }
   return out;
 }
+
+/** Decimals needed so adjacent ticks never print the same label. */
+export function tickDigits(ticks: number[]): number {
+  if (ticks.length < 2) return 0;
+  const step = Math.abs(ticks[1] - ticks[0]);
+  return step >= 1 ? 0 : Math.min(4, Math.ceil(-Math.log10(step) - 1e-9));
+}

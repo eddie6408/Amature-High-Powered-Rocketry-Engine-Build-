@@ -19,25 +19,39 @@ presented as flight data.
 > construction content, and it will not generate any. Fly under your national
 > association's safety code (NAR/TRA/UKRA/…) and your local regulations.
 
-## Quick start
+## Quick start: the application
 
 ```bash
-pip install -e ".[dev]"                                   # Python >= 3.10
-cmake -S firmware -B firmware/build && cmake --build firmware/build   # C flight software
-./firmware/build/test_firmware                            # firmware unit tests
-pytest                                                    # full test suite
+pip install -e ".[dev]"                                              # Python >= 3.10
+cmake -S firmware -B firmware/build && cmake --build firmware/build  # C flight software (used by SIL)
+(cd ui && npm install && npm run build)                              # web app
 
-aerodyne stability              # mass properties + static margin of the example vehicle
-aerodyne simulate               # 6-DOF flight simulation
-aerodyne montecarlo -n 100      # dispersion analysis (apogee, landing ellipse, ...)
-aerodyne sil --all-faults --backend c-app   # fly the complete C flight application through 14 fault scenarios
-aerodyne demo                   # the full closed loop on synthetic flight data
+aerodyne init ~/rockets/my-project --name "My project"
+aerodyne app ~/rockets/my-project                                    # http://127.0.0.1:8765
+```
 
-# ground station (web UI)
-(cd ground-ui && npm install && npm run build)
-aerodyne ground                 # http://127.0.0.1:8765 - replays a SIL flight (clearly marked SIMULATED)
-aerodyne ground --udp 5600 --record flight.cap   # live: raw radio bytes over UDP, recorded
-aerodyne ground --console       # text view, no browser needed
+The app walks one rocket from idea to flight and back:
+
+| Step | What you do |
+|---|---|
+| **1 · Design** | Build the vehicle from components or import OpenRocket. Live side profile, mass, CG/CP and stability. Enter measured masses as you build. Revisions lock once flown. |
+| **2 · Motors** | Import certified/manufacturer thrust curves (`.eng`) with declared source and quality. |
+| **3 · Simulate** | A mission = revision + motor + site + wind + limits. 6-DOF prediction and Monte Carlo dispersion (apogee percentiles, landing ellipse). |
+| **4 · Test & readiness** | Fly the real C flight software through 14 fault scenarios, then get a GO / NO-GO review with evidence for every check. |
+| **5 · Fly** | Ground station: serial/UDP radio (or a rehearsal), pad status, live telemetry, ground track, honest landing estimate. The recording is filed with the flight as write-once raw data. |
+| **6 · Analyse** | Import altimeter/flight-computer logs (any CSV, units confirmed by you) or the telemetry capture. Reconstruct, compare with the prediction, see possible contributors, then revise the design. |
+
+See the **[user guide](docs/USER_GUIDE.md)** for the step-by-step, launch-day procedure included.
+
+### Command line and developer tools
+
+```bash
+./firmware/build/test_firmware                   # firmware unit tests
+pytest                                           # Python test suite
+(cd ui && npm test)                              # UI tests
+aerodyne demo                                    # closed loop on synthetic data, in the terminal
+aerodyne sil --all-faults --backend c-app        # fault suite on the C flight application
+aerodyne ground --console --udp 5600             # text-only ground station
 ```
 
 The example vehicle (`AERODYNE-EX1`) flies a **synthetic, HYPOTHETICAL** motor
@@ -49,7 +63,11 @@ curve. It shows how the tools fit together; it is not a flight-ready design.
 |---|---|---|
 | Provenance, record metadata, hashing | `aerodyne.core` | ✅ |
 | Configuration management (AERODYNE-001, REV-A…, flown = immutable) | `aerodyne.config` | ✅ |
-| Engineering database (PostgreSQL, immutability triggers) | `db/schema.sql` | ✅ schema; ORM layer not yet |
+| Project workspace (vehicles, revisions, motors, missions, runs, flights; write-once raw data) | `aerodyne.workspace` | ✅ file-based, git-friendly |
+| Application server (JSON API, background jobs, ground sessions) + web app | `aerodyne.app`, `ui/` | ✅ design → motors → simulate → test/readiness → fly → analyse |
+| Readiness review (GO / NO-GO with evidence; stale results never reused) | `aerodyne.readiness` | ✅ |
+| Flight-log import (any CSV: header sniffing, unit mapping, baro-only logs, telemetry captures) | `aerodyne.analysis.flightlog`, `.telemetry_log` | ✅ |
+| Engineering database (PostgreSQL, immutability triggers) | `db/schema.sql` | ✅ schema for multi-user deployments; the app uses the file workspace |
 | Vehicle designer (parametric components, materials) | `aerodyne.vehicle` | ✅ |
 | Mass-properties engine (CG, inertia, configurations, CG travel) | `aerodyne.vehicle.mass` | ✅ |
 | Motor database / performance / `.eng` import-export | `aerodyne.propulsion` | ✅ |
@@ -71,7 +89,7 @@ curve. It shows how the tools fit together; it is not a flight-ready design.
 | Software-in-the-loop with 11 fault types | `aerodyne.sil` | ✅ backends: `python`, `c` (C FSM + filter), `c-app` (complete C application) |
 | Hardware-in-the-loop | `aerodyne.sil.hil` | ⚠️ protocol + bridge only; needs hardware |
 | Ground station core (link stats, GPS quality, landing estimate with honest radius) | `aerodyne.ground` | ✅ |
-| AERODYNE GROUND web UI (React + TypeScript, own TELEMETRY-2 decoder) | `ground-ui/` | ✅ live tiles, plots, ground track, sensor health, table view, light/dark |
+| Ground station in the app (React + TypeScript, own TELEMETRY-2 decoder) | `ui/` | ✅ pad status, live tiles, plots, ground track, sensor health, table view, light/dark |
 | Ground server (SSE relay, UDP/serial/SIL/capture sources, raw capture + SHA-256) | `aerodyne.ground.server` | ✅ |
 | Flight data ingestion + time normalization | `aerodyne.analysis.ingestion` | ✅ |
 | Post-flight reconstruction (KF + RTS smoother, phases) | `aerodyne.analysis.reconstruction` | ✅ |
@@ -90,7 +108,7 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for interfaces and data flow 
 ```text
 src/aerodyne/     Python platform (engineering, simulation, analysis, SIL, ground)
 firmware/         C11 flight-software core + application, HAL/RTOS interfaces, host unit tests
-ground-ui/        AERODYNE GROUND web dashboard (React + TypeScript, Vitest)
+ui/        AERODYNE GROUND web dashboard (React + TypeScript, Vitest)
 db/schema.sql     PostgreSQL engineering database
 docs/             architecture and firmware design
 tests/            pytest suite (includes C-vs-Python flight-software equivalence tests)

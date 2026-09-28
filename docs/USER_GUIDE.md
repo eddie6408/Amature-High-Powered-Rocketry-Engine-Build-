@@ -1,0 +1,131 @@
+# AERODYNE user guide: from idea to flight and back
+
+AERODYNE is one application for the whole life of a rocket:
+
+```text
+1 Design  →  2 Motors  →  3 Simulate  →  4 Test & readiness  →  5 Fly (ground station)  →  6 Analyse  →  next revision
+```
+
+Every number is labelled **MEASURED**, **SIMULATED**, **ESTIMATED**, **DERIVED** or
+**HYPOTHETICAL**. Raw flight data is write-once, and a flown configuration is locked.
+
+## 0. Install and create a project
+
+```bash
+pip install -e ".[dev]"
+cmake -S firmware -B firmware/build && cmake --build firmware/build   # C flight software (for SIL)
+(cd ui && npm install && npm run build)                                # web app
+
+aerodyne init ~/rockets/my-project --name "My project" --author "Your name"
+aerodyne app ~/rockets/my-project          # open http://127.0.0.1:8765
+```
+
+A project is a plain folder, so you can keep it in git or on a USB stick for the field laptop:
+
+| Path | Contents |
+|---|---|
+| `registry.json` | vehicles, revisions (REV-A, REV-B…), flown configurations |
+| `motors.json` | motor datasets, each with source, date and data quality |
+| `missions/` | simulation setups (vehicle revision + motor + site + wind + limits) |
+| `runs/` | saved simulations, Monte Carlo, SIL and readiness results (with config hashes) |
+| `flights/<id>/raw/` | measured data: read-only, SHA-256 recorded, never overwritten |
+| `captures/` | every ground-station session, recorded byte for byte |
+
+`aerodyne init` adds an example vehicle and a *synthetic* motor so you can learn the tools.
+Synthetic data can never pass readiness.
+
+## 1. Design
+
+**Design → + New** starts from a minimal rocket, the example, or an **OpenRocket `.ork`** file.
+Components are edited in place, and the side profile, mass, CG, CP and static margin update
+as you type. Pick the motor for analysis at the top to see loaded and burnout stability.
+
+* **Weigh as you build.** Enter the scale reading in *Measured mass* (and *Measured CG*
+  when you have it). The badge changes from ESTIMATED to MEASURED, and readiness warns
+  until every part is weighed.
+* **Revisions.** An ACTIVE revision can be edited freely. *New revision…* freezes it and saves
+  your changes as the next one, with a change note. After a flight, that revision is FLOWN and
+  locked forever; *Edit as new revision* continues from it.
+* **CAD.** From Python, STL parts (`aerodyne.cad.stl_part`) and Fusion/SolidWorks mass-property
+  CSVs (`aerodyne.cad.read_mass_properties_csv`) become components.
+
+## 2. Motors
+
+Import the **certified or manufacturer** thrust curve (RASP `.eng`, for example from
+ThrustCurve.org) for every motor you might fly. Declare its quality and source honestly.
+Several datasets for one motor sit side by side and are never merged. Readiness fails on
+`HYPOTHETICAL` or `UNKNOWN` motor data.
+
+## 3. Simulate
+
+A **mission** is one planned flight: vehicle revision, motor, launch site (altitude, rail
+length, angle and azimuth), wind and atmosphere, and **limits**. Set the limits from your
+safety code, waiver and field: minimum stability, rail-exit speed, thrust-to-weight,
+altitude ceiling, recovery-field radius and descent rates.
+
+* **Simulate** runs the 6-DOF prediction: apogee, speeds, loads, stability over the burn,
+  deployment speeds and landing point.
+* **Monte Carlo** disperses mass, CG, impulse, burn time, drag, wind, temperature and rail
+  pointing, then reports percentiles, an apogee histogram and the landing ellipse against your
+  field radius.
+* Above about Mach 0.8, import RASAero/CFD aero tables (Python API); the analytical model is
+  weakest there.
+
+## 4. Test & readiness (before you build)
+
+* **Fault suite:** your flight software (the C firmware application by default) flies
+  14 scenarios on the mission's simulated trajectory. They include sensor failures, spikes,
+  stale data, corrupted telemetry, low battery, clock jumps, storage failure and a processor
+  reset. Each scenario must reach the right flight states at the right times.
+* **Readiness review:** GO / NO-GO with the value, requirement and evidence for every check.
+  It only uses Monte Carlo and SIL results computed for *exactly* the current design, motor
+  and mission. Change anything and they must be re-run.
+
+Readiness is an engineering aid. The RSO makes the final call under your safety code.
+
+## 5. Fly: launch day with the ground station
+
+1. **Analyse → + New** creates the flight record: flight ID, mission, the revision and motor
+   actually flown, and your flight-computer hardware and firmware versions. This locks the
+   revision.
+2. **Fly → Start a session:**
+   * *Radio on serial port*: the ground radio's serial device and baud rate
+     (`pip install pyserial`).
+   * *Radio bridge over UDP*: any bridge that forwards raw radio bytes as UDP datagrams.
+   * *Rehearsal*: a simulated flight of the mission. It's useful for crew training and is
+     clearly marked SIMULATED.
+   * *Record into flight*: select the flight record. Enter the main-deploy altitude and descent
+     rate so the landing estimate can use them.
+3. **On the pad**, *Pad status* shows the telemetry link, armed state, IMU/baro/storage health,
+   battery and GPS fix.
+4. **In flight** you get live altitude, velocity, acceleration, tilt, the ground track and the
+   landing estimate. The estimate's radius reflects GPS quality and extrapolation time. No
+   estimate is shown when the altitude isn't baro-aided.
+5. **Stop & file recording.** The raw capture is added to the flight's write-once data with
+   its SHA-256. Rehearsal data is never filed as flight data.
+
+To use a tablet at the field, run `aerodyne app <project> --host 0.0.0.0` on a laptop.
+Only do this on a network you trust: the app has no login.
+
+## 6. Analyse (and improve)
+
+Open the flight and pick a raw file:
+
+* **Altimeter or flight-computer logs (CSV/TXT):** the header is sniffed, and columns and
+  units (ft/m, ms/s, g, hPa…) are proposed. **Confirm every column**, then *Analyse flight*.
+  Logs without an accelerometer work too (baro-only reconstruction).
+* **Ground-station captures (`.cap`):** decoded with the same TELEMETRY-2 receiver.
+
+You get the reconstructed flight next to the prediction, a comparison table, **possible
+contributors** (evidence, not blame) and the digital-twin validation status.
+*Propose drag calibration* estimates the drag scale that would reproduce the measured apogee.
+It's a proposal to review, because mass, motor or wind can mimic a drag error.
+
+Then go back to **Design**, create the next revision, and repeat.
+
+## Flight computer
+
+The firmware core (`firmware/`) is portable C11 with a HAL. See [FIRMWARE.md](FIRMWARE.md) for
+the task table, state machine and telemetry format. Until it runs on your board, you can use
+any flight computer: record its log and import it in step 6. Its telemetry can feed the ground
+station if it speaks TELEMETRY-2 (see `aerodyne.avionics.telemetry`).

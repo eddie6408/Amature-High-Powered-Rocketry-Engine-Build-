@@ -219,9 +219,14 @@ class FlightSoftware:
         gnss_valid = (self.health.get("gnss") == Health.OK and self.gnss_ground is not None
                       and len(self._gnss_hist) >= 2 and self._gnss_hist[-1][0] - self._gnss_hist[0][0] >= 4.0)
         if gnss_valid:
-            (t0, a0), (t1, a1) = self._gnss_hist[0], self._gnss_hist[-1]
-            gnss_vel = (a1 - a0) / (t1 - t0)
-            gnss_agl = a1 - self.gnss_ground
+            # least-squares slope over every fix in the window: an end-point difference
+            # of noisy fixes can exceed the "stationary" threshold at rest
+            ts = [x[0] for x in self._gnss_hist]
+            al = [x[1] for x in self._gnss_hist]
+            tm, am = sum(ts) / len(ts), sum(al) / len(al)
+            sxx = sum((x - tm) ** 2 for x in ts)
+            gnss_vel = sum((x - tm) * (a - am) for x, a in zip(ts, al)) / sxx
+            gnss_agl = al[-1] - self.gnss_ground
 
         # 4. state machine
         prev = self.fsm.state

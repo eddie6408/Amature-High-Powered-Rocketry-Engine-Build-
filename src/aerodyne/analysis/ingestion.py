@@ -64,6 +64,29 @@ class FlightDataset:
         self.time_offset = float(ch.t[idx[0]])
         return self.time_offset
 
+    def align_to_liftoff_baro(self, channel: str = "baro_alt", rise: float = 15.0,
+                              sustain: float = 0.3) -> float:
+        """Liftoff from altitude alone: first sustained rise above the pad level,
+        walked back to the last sample still within 1 m of the pad."""
+        ch = self.channels[channel]
+        t, z = ch.t, ch.values
+        n0 = max(5, min(len(z) // 20, 200))
+        ground = float(np.median(z[:n0]))
+        dt = float(np.median(np.diff(t)))
+        n = max(1, int(round(sustain / dt)))
+        above = (z - ground) > rise
+        run = np.convolve(above.astype(int), np.ones(n, int), mode="valid")
+        idx = np.nonzero(run >= n)[0]
+        if len(idx) == 0:
+            raise ValueError("no liftoff found in altitude channel")
+        i = int(idx[0])
+        while i > 0 and z[i] - ground > 1.0:
+            i -= 1
+        self.time_offset = float(t[i])
+        self.notes.append("liftoff time from barometric altitude (no accelerometer); "
+                          "uncertain by about one sample period plus baro lag")
+        return self.time_offset
+
     def resample(self, names: list[str], rate: float) -> tuple[np.ndarray, dict[str, np.ndarray]]:
         """Common timebase over the overlap of the channels; linear interpolation,
         never extrapolation."""

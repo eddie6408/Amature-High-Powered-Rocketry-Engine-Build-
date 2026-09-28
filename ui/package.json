@@ -1,9 +1,9 @@
 {
-  "name": "aerodyne-ground-ui",
+  "name": "aerodyne-ui",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "AERODYNE GROUND - live telemetry dashboard (TELEMETRY-2)",
+  "description": "AERODYNE - design, test, fly and analyse (web UI)",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",

@@ -314,8 +314,23 @@ bool aero_app_step(aero_app_t *a, double t, const aero_input_t in[AERO_SLOT_COUN
         int last = (a->gnss_head + a->gnss_count - 1) % AERO_GNSS_HIST;
         double span = a->gnss_t[last] - a->gnss_t[a->gnss_head];
         if (span >= 4.0) {
-            gnss_valid = true;
-            gnss_vel = (float)((a->gnss_alt[last] - a->gnss_alt[a->gnss_head]) / span);
+            /* least-squares slope over the window (an end-point difference of
+             * noisy fixes can exceed the stationary threshold at rest) */
+            double tm = 0.0, am = 0.0, sxx = 0.0, sxy = 0.0;
+            for (int k = 0; k < a->gnss_count; k++) {
+                int i = (a->gnss_head + k) % AERO_GNSS_HIST;
+                tm += a->gnss_t[i];
+                am += a->gnss_alt[i];
+            }
+            tm /= a->gnss_count;
+            am /= a->gnss_count;
+            for (int k = 0; k < a->gnss_count; k++) {
+                int i = (a->gnss_head + k) % AERO_GNSS_HIST;
+                sxx += (a->gnss_t[i] - tm) * (a->gnss_t[i] - tm);
+                sxy += (a->gnss_t[i] - tm) * (a->gnss_alt[i] - am);
+            }
+            gnss_valid = sxx > 0.0;
+            gnss_vel = gnss_valid ? (float)(sxy / sxx) : 0.0f;
             gnss_agl = (float)(a->gnss_alt[last] - a->gnss_ground);
         }
     }

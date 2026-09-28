@@ -2,9 +2,9 @@
 
 Produces raw radio bytes (with corruption, duplicates and reordering) from a
 SIL run plus the Python GroundStation's results, so the TypeScript UI
-(ground-ui/src/*.test.ts) can prove it decodes and estimates identically.
+(ui/src/*.test.ts) can prove it decodes and estimates identically.
 
-    python -m aerodyne.ground.fixtures ground-ui/src/__fixtures__/sil_corrupted.json
+    python -m aerodyne.ground.fixtures ui/src/__fixtures__/sil_corrupted.json
 """
 
 from __future__ import annotations
@@ -63,7 +63,7 @@ def build(scenario: str = "corrupted_packets") -> dict:
 
 
 def main(argv: list[str]) -> int:
-    out = Path(argv[1] if len(argv) > 1 else "ground-ui/src/__fixtures__/sil_corrupted.json")
+    out = Path(argv[1] if len(argv) > 1 else "ui/src/__fixtures__/sil_corrupted.json")
     out.write_text(json.dumps(build(), separators=(",", ":")) + "\n")
     print(f"wrote {out}")
     return 0

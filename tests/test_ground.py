@@ -13,7 +13,7 @@ from aerodyne.ground import server
 from aerodyne.sil.runner import SILRunner
 from aerodyne.vehicle.mass import MassPropertiesEngine
 
-FIXTURE = Path(__file__).resolve().parents[1] / "ground-ui" / "src" / "__fixtures__" / "sil_corrupted.json"
+FIXTURE = Path(__file__).resolve().parents[1] / "ui" / "src" / "__fixtures__" / "sil_corrupted.json"
 
 
 @pytest.fixture(scope="module")

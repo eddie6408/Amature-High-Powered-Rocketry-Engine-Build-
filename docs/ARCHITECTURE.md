@@ -57,7 +57,7 @@ radio ──bytes──> aerodyne ground (server) ──SSE (raw bytes, base64)�
 
 The server never decodes or filters: the browser sees corruption, duplicates
 and gaps exactly as received. Python (`aerodyne.ground.station`) and TypeScript
-(`ground-ui/src/station.ts`) implement the same receiver and landing-estimate
+(`ui/src/station.ts`) implement the same receiver and landing-estimate
 algorithm; a shared fixture generated from a SIL run with corrupted packets
 (`python -m aerodyne.ground.fixtures`) is asserted by both test suites.
 

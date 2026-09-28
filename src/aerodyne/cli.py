@@ -179,6 +179,11 @@ def cmd_ground(args) -> int:
             "capture": args.record, "plan": plan}
     if args.console:
         return _ground_console(src)
+    if not args.raw_server:
+        print("The web ground station is part of the AERODYNE app:\n"
+              "  aerodyne init my-project && aerodyne app my-project   -> '5 · Fly'\n"
+              "Use --console for a text view, or --raw-server for the bare SSE relay.")
+        return 2
     server.serve(src, info, port=args.port, host=args.host,
                  capture=Path(args.record) if args.record else None)
     return 0
@@ -207,6 +212,23 @@ def _ground_console(src) -> int:
             last = t
             print("\033[2J\033[H" + gs.render(), flush=True)
     print(gs.render())
+    return 0
+
+
+def cmd_init(args) -> int:
+    from aerodyne.workspace import Workspace
+
+    ws = Workspace.init(args.path, args.name, args.author, with_example=not args.empty)
+    print(f"workspace created at {ws.root}")
+    print(f"start the app with:  aerodyne app {ws.root}")
+    return 0
+
+
+def cmd_app(args) -> int:
+    from aerodyne.app.server import serve
+    from aerodyne.workspace import Workspace
+
+    serve(Workspace(args.path), host=args.host, port=args.port)
     return 0
 
 
@@ -255,9 +277,22 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--loop", action="store_true")
     s.add_argument("--record", help="append raw received bytes to this capture file")
     s.add_argument("--console", action="store_true", help="text view instead of web server")
+    s.add_argument("--raw-server", action="store_true",
+                   help="bare SSE relay of raw radio bytes (for custom clients)")
     s.add_argument("--plan-main-alt", type=float, help="descent plan: main deploy altitude AGL (m)")
     s.add_argument("--plan-main-rate", type=float, help="descent plan: main descent rate (m/s)")
     s.set_defaults(fn=cmd_ground)
+    s = sub.add_parser("init", help="create a project workspace")
+    s.add_argument("path")
+    s.add_argument("--name", default="AERODYNE project")
+    s.add_argument("--author", default="unknown")
+    s.add_argument("--empty", action="store_true", help="no example vehicle/mission")
+    s.set_defaults(fn=cmd_init)
+    s = sub.add_parser("app", help="run the AERODYNE application (design → flight)")
+    s.add_argument("path", help="workspace directory")
+    s.add_argument("--host", default="127.0.0.1")
+    s.add_argument("--port", type=int, default=8765)
+    s.set_defaults(fn=cmd_app)
     args = p.parse_args(argv)
     return args.fn(args)
 

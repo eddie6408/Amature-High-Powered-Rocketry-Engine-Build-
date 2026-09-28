@@ -8,7 +8,7 @@ capture file with a SHA-256 manifest (raw data is never destroyed).
 Endpoints
     GET /api/stream   Server-Sent Events; each event is {"t": rx_time, "b64": raw bytes}
     GET /api/info     source description, capture path
-    GET /*            the built web UI (ground-ui/dist)
+    GET /*            the built web UI (ui/dist)
 
 Sources: SIL replay (for rehearsal/training), UDP (a radio bridge sends raw
 bytes as datagrams), serial (optional ``pyserial``).
@@ -28,7 +28,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable, Iterable
 
-UI_DIST = Path(__file__).resolve().parents[3] / "ground-ui" / "dist"
+UI_DIST = Path(__file__).resolve().parents[3] / "ui" / "dist"
 
 
 class Broadcaster:
@@ -180,7 +180,7 @@ def make_handler(b: Broadcaster, info: dict, ui_dir: Path = UI_DIST):
             f = (ui_dir / rel).resolve()
             if not str(f).startswith(str(ui_dir.resolve())) or not f.is_file():
                 if not (ui_dir / "index.html").is_file():
-                    return self._send(404, b"UI not built: cd ground-ui && npm install && npm run build",
+                    return self._send(404, b"UI not built: cd ui && npm install && npm run build",
                                       "text/plain")
                 f = ui_dir / "index.html"
             ctype = mimetypes.guess_type(str(f))[0] or "application/octet-stream"

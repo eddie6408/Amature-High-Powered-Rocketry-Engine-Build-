@@ -71,8 +71,11 @@ class FlightReconstructionEngine:
         kinds = {c.kind for c in ds.channels.values()}
         kind = DataKind.HYPOTHETICAL if DataKind.HYPOTHETICAL in kinds else DataKind.DERIVED
         notes = list(ds.notes)
-        if ds.time_offset == 0.0 and "accel_axial" in ds.channels:
-            ds.align_to_liftoff()
+        if ds.time_offset == 0.0:
+            if "accel_axial" in ds.channels:
+                ds.align_to_liftoff()
+            else:
+                ds.align_to_liftoff_baro()
         tb, zb = ds.t("baro_alt"), ds.v("baro_alt")
         ground = float(np.median(zb[tb < -0.5])) if np.any(tb < -0.5) else float(zb[0])
         if not np.any(tb < -0.5):
@@ -100,13 +103,17 @@ class FlightReconstructionEngine:
         xp = np.zeros((n, 2)); Pp = np.zeros((n, 2, 2))
         x = np.array([0.0, 0.0]); P = np.diag([4.0, 1.0])
         bi = 0
+        # outlier gate on baro samples; wider without an accelerometer, where the
+        # prediction cannot follow the boost and a tight gate would reject good data
+        gate = 8.0 if have_acc else 30.0
         dt = 1.0 / self.rate
         F = np.array([[1, dt], [0, 1]])
         B = np.array([0.5 * dt * dt, dt])
         for k in range(n):
             descent = t[k] > t_apo_rough
             u = 0.0 if (descent or not have_acc) else a_vert[k] - G
-            s = 6.0 if (descent or not have_acc) else self.accel_sigma
+            # without an accelerometer the boost is an unmodelled 10+ g manoeuvre
+            s = 6.0 if descent else (self.accel_sigma if have_acc else 40.0)
             if k > 0:
                 x = F @ x + B * u
                 P = F @ P @ F.T + np.outer(B, B) * s * s
@@ -114,7 +121,7 @@ class FlightReconstructionEngine:
             while bi < len(tb) and tb[bi] <= t[k]:
                 z = zb[bi] - ground
                 S = P[0, 0] + self.baro_sigma ** 2
-                if abs(z - x[0]) / math.sqrt(S) < 8.0:
+                if abs(z - x[0]) / math.sqrt(S) < gate:
                     K = P[:, 0] / S
                     x = x + K * (z - x[0])
                     P = P - np.outer(K, P[0, :])
@@ -128,6 +135,9 @@ class FlightReconstructionEngine:
             Psm[k] = Ps[k] + C @ (Psm[k + 1] - Pp[k + 1]) @ C.T
         alt, vel = xsm[:, 0], xsm[:, 1]
         i_apo = int(np.argmax(alt))
+        if not have_acc:
+            phases["burnout"] = float(t[int(np.argmax(vel[:i_apo + 1]))])
+            notes.append("burnout estimated from the peak of baro-derived velocity (no accelerometer)")
         phases["apogee"] = float(t[i_apo])
         phases.pop("apogee_rough", None)
         # landing: first time after apogee that altitude stays within 5 m of the final level for 3 s
