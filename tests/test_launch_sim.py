@@ -94,9 +94,9 @@ def test_live_weather_parse_fetch_and_offline():
     def offline(url, timeout):
         raise urllib.error.URLError("no route to host")
 
-    with pytest.raises(LiveWeatherError, match="by hand"):
+    with pytest.raises(LiveWeatherError, match="not reachable"):
         fetch_live_weather(40.0, -105.0, opener=offline)
-    with pytest.raises(BadRequest, match="by hand"):
+    with pytest.raises(BadRequest, match="no internet"):
         live_weather(40.0, -105.0, fetch=lambda la, lo: fetch_live_weather(la, lo, opener=offline))
     with pytest.raises(ValueError):
         fetch_live_weather(95.0, 0.0, opener=opener)

@@ -92,9 +92,10 @@ def fetch_live_weather(lat: float, lon: float, timeout: float = 10.0,
         with opener(open_meteo_url(lat, lon), timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, OSError, TimeoutError) as exc:
-        raise LiveWeatherError(f"no weather service reachable ({exc}); enter the weather by hand") from exc
+        reason = getattr(exc, "reason", None) or exc
+        raise LiveWeatherError(f"weather service not reachable - no internet? ({reason})") from exc
     except json.JSONDecodeError as exc:
-        raise LiveWeatherError("weather service sent an unreadable reply; enter the weather by hand") from exc
+        raise LiveWeatherError("weather service sent an unreadable reply") from exc
     if isinstance(data, dict) and data.get("error"):
         raise LiveWeatherError(f"weather service: {data.get('reason', 'error')}")
     return parse_open_meteo(data)
