@@ -59,6 +59,8 @@ typedef struct {
     float baro_gate_sigma;
     float descent_accel_sigma;
     float kf_accel_sigma, kf_baro_sigma;
+    aero_tlm_identity_t identity;   /* reported periodically to the ground station */
+    float identity_period;          /* s */
 } aero_app_config_t;
 
 /* Persisted to backup SRAM / FRAM. */
@@ -108,6 +110,7 @@ typedef struct {
     bool resumed;
     aero_nv_state_t nv;
     bool nv_dirty;
+    double next_identity;
 } aero_app_t;
 
 void aero_app_default_config(aero_app_config_t *cfg);
@@ -119,6 +122,13 @@ void aero_app_report_storage(aero_app_t *app, bool ok);
  * After the call, app->nv holds the state to persist when app->nv_dirty. */
 bool aero_app_step(aero_app_t *app, double t, const aero_input_t in[AERO_SLOT_COUNT],
                    aero_tlm_packet_t *pkt);
+
+/* Identity frame when due (call on cycles without a telemetry frame).
+ * Returns the frame length written to buf (>= AERO_TLM_ID_FRAME_SIZE bytes), or 0. */
+size_t aero_app_identity(aero_app_t *app, double t, uint8_t *buf);
+/* Boot code computes the image SHA-256 (and config hash) and provisions them here. */
+void aero_app_set_identity_hashes(aero_app_t *app, const uint8_t firmware_hash[32],
+                                  const uint8_t config_hash[32]);
 
 /* Accessors (diagnostics, SIL bindings; avoid depending on struct layout). */
 size_t aero_app_sizeof(void);

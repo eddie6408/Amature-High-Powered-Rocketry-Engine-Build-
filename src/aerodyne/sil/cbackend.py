@@ -248,6 +248,8 @@ def _load_app(lib: C.CDLL) -> None:
                      ("aero_app_nv_dirty", C.c_bool)):
         getattr(lib, name).argtypes = [vp]
         getattr(lib, name).restype = rt
+    lib.aero_app_identity.argtypes = [vp, C.c_double, C.POINTER(C.c_uint8)]
+    lib.aero_app_identity.restype = C.c_size_t
     lib.aero_app_health.argtypes = [vp, C.c_int]
     lib.aero_app_health.restype = C.c_int
     lib._app_ready = True
@@ -346,6 +348,12 @@ class CFlightApp:
         if self.lib.aero_app_nv_dirty(self._buf):
             self._save_nv()
         if not due:
+            buf = (C.c_uint8 * 128)()
+            n = self.lib.aero_app_identity(self._buf, t, buf)
+            if n:
+                from aerodyne.avionics.telemetry import IdentityPacket
+
+                return IdentityPacket.decode(bytes(buf[:n]))    # C encoder checked by Python decoder
             return None
         return TelemetryPacket(
             vehicle_id=pkt.vehicle_id, flight_id=pkt.flight_id, sequence=pkt.sequence,

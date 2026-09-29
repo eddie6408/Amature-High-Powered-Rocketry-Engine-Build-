@@ -70,6 +70,14 @@ class SILResult:
         return issues
 
 
+from aerodyne.avionics.firmware import FirmwareIdentity
+
+# Identity reported by the Python reference flight software in SIL (not provisioned
+# with image/config hashes: those come from the release tooling on real hardware).
+SIL_IDENTITY = FirmwareIdentity(version="FW-SIL-PY", build_timestamp="n/a", commit_hash="reference",
+                                config_hash="0" * 64, firmware_hash="0" * 64)
+
+
 def make_flight_software(backend: str, cfg: FswConfig, logger: FlightDataLogger, nv: dict):
     """backend: "python" (reference), "c" (Python cycle with the C state machine and
     filter), or "c-app" (the complete C application cycle, firmware/src/aero_app.c)."""
@@ -92,7 +100,7 @@ class SILRunner:
         self.noise = noise
         self.radio = radio or RadioModel()
         self.dt = dt
-        self.fsw_config = fsw_config or FswConfig()
+        self.fsw_config = fsw_config or FswConfig(identity=SIL_IDENTITY)
 
     def _apply_sensor_faults(self, t: float, readings: dict[str, SensorReading],
                              stale: dict[str, SensorReading], spiked: set[int]

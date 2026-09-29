@@ -19,6 +19,7 @@ from urllib.parse import parse_qs, urlparse
 
 from aerodyne.app import services as svc
 from aerodyne.app.ground_session import GroundSession
+from aerodyne.reporting.reports import flight_report
 from aerodyne.workspace import Workspace, WorkspaceError
 
 UI_DIST = Path(__file__).resolve().parents[3] / "ui" / "dist"
@@ -76,6 +77,8 @@ class App:
           svc.sniff_flight_file(ws_, fid, name))
         r("POST", r"/api/flights/(?P<fid>[^/]+)/analyze", lambda q, b, fid: svc.analyze_flight(
             ws_, fid, b["file"], b.get("mapping", {})))
+        r("GET", r"/api/flights/(?P<fid>[^/]+)/report", lambda q, b, fid: {"markdown": flight_report(
+            ws_.flight(fid), ws_.flight_analysis(fid))})
         r("POST", r"/api/flights/(?P<fid>[^/]+)/calibrate", lambda q, b, fid: svc.propose_calibration(ws_, fid))
         # ground station
         r("GET", r"/api/ground/status", lambda q, b: self.ground.status())

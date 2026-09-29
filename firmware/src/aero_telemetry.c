@@ -112,3 +112,48 @@ int aero_tlm_decode(const uint8_t *buf, size_t len, aero_tlm_packet_t *o)
     get_u8(b, &o->gnss_sats);
     return 0;
 }
+
+static uint8_t *put_bytes(uint8_t *b, const void *src, size_t n)
+{
+    memcpy(b, src, n);
+    return b + n;
+}
+
+size_t aero_tlm_encode_identity(const aero_tlm_identity_t *id, uint8_t *buf)
+{
+    uint8_t *b = buf;
+    b = put_u16(b, AERO_TLM_ID_SYNC);
+    b = put_u8(b, AERO_TLM_VERSION);
+    b = put_u16(b, id->vehicle_id);
+    b = put_u16(b, id->flight_id);
+    b = put_u32(b, id->sequence);
+    b = put_bytes(b, id->fw_version, sizeof id->fw_version);
+    b = put_bytes(b, id->commit, sizeof id->commit);
+    b = put_bytes(b, id->firmware_hash, sizeof id->firmware_hash);
+    b = put_bytes(b, id->config_hash, sizeof id->config_hash);
+    b = put_bytes(b, id->hw_version, sizeof id->hw_version);
+    uint16_t crc = aero_crc16_ccitt(buf, (size_t)(b - buf), 0xFFFFu);
+    b = put_u16(b, crc);
+    return (size_t)(b - buf);
+}
+
+int aero_tlm_decode_identity(const uint8_t *buf, size_t len, aero_tlm_identity_t *o)
+{
+    if (len != AERO_TLM_ID_FRAME_SIZE) return -1;
+    uint16_t crc_rx, sync;
+    uint8_t ver;
+    get_u16(buf + AERO_TLM_ID_FRAME_SIZE - 2, &crc_rx);
+    if (aero_crc16_ccitt(buf, AERO_TLM_ID_FRAME_SIZE - 2, 0xFFFFu) != crc_rx) return -2;
+    const uint8_t *b = get_u16(buf, &sync);
+    b = get_u8(b, &ver);
+    if (sync != AERO_TLM_ID_SYNC || ver != AERO_TLM_VERSION) return -3;
+    b = get_u16(b, &o->vehicle_id);
+    b = get_u16(b, &o->flight_id);
+    b = get_u32(b, &o->sequence);
+    memcpy(o->fw_version, b, sizeof o->fw_version); b += sizeof o->fw_version;
+    memcpy(o->commit, b, sizeof o->commit); b += sizeof o->commit;
+    memcpy(o->firmware_hash, b, sizeof o->firmware_hash); b += sizeof o->firmware_hash;
+    memcpy(o->config_hash, b, sizeof o->config_hash); b += sizeof o->config_hash;
+    memcpy(o->hw_version, b, sizeof o->hw_version);
+    return 0;
+}

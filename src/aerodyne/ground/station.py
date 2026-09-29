@@ -106,6 +106,20 @@ class GroundStation:
                 self.launch_position = (p.latitude, p.longitude)
             self.track.append((p.timestamp_ms / 1000.0, p.latitude, p.longitude, p.altitude))
 
+    def firmware_check(self, expected: dict | None) -> tuple[str, str]:
+        """(status, detail) of the reported firmware identity vs the flight record."""
+        ident = self.rx.identity
+        if ident is None:
+            return "FAIL", "no identity frame received"
+        detail = f"{ident.firmware_version} ({ident.commit}) on {ident.hardware_version}"
+        if not ident.provisioned:
+            return "WARN", detail + "; image hash not provisioned"
+        if not expected or not expected.get("firmware_hash"):
+            return "WARN", detail + "; no expected hash in the flight record"
+        if expected["firmware_hash"].lower() != ident.firmware_hash:
+            return "FAIL", detail + "; firmware hash does not match the flight record"
+        return "PASS", detail + "; hash matches flight record"
+
     def link_status(self) -> str:
         if self.status.last_packet_time is None:
             return "NO LINK"

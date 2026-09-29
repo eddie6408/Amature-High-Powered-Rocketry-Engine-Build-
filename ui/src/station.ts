@@ -100,6 +100,17 @@ export class GroundStation {
     return this.latest ? tiltDeg(this.latest.attitude) : null;
   }
 
+  /** Reported firmware identity vs the flight record (mirrors firmware_check in Python). */
+  firmwareCheck(expected: { firmware_hash?: string | null } | null): [string, string] {
+    const id = this.rx.identity;
+    if (!id) return ["FAIL", "no identity frame received"];
+    const detail = `${id.firmwareVersion} (${id.commit}) on ${id.hardwareVersion}`;
+    if (!/[^0]/.test(id.firmwareHash)) return ["WARN", `${detail}; image hash not provisioned`];
+    if (!expected?.firmware_hash) return ["WARN", `${detail}; no expected hash in the flight record`];
+    if (expected.firmware_hash.toLowerCase() !== id.firmwareHash) return ["FAIL", `${detail}; firmware hash does not match the flight record`];
+    return ["PASS", `${detail}; hash matches flight record`];
+  }
+
   linkStatus(): string {
     if (this.lastPacketRx === null) return "NO LINK";
     const age = this.now - this.lastPacketRx;

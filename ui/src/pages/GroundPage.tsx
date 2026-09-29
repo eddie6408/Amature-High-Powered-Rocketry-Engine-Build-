@@ -10,6 +10,7 @@ import { Card, ErrorBox, NumberField, SelectField, Stat, StatusPill, TextField }
 import { GroundStation, gnssQuality, type DescentPlan } from "../station";
 
 interface SessionStatus { active: boolean; source?: string; simulated?: boolean; flight_id?: string | null;
+  expected_identity?: { firmware_hash?: string | null; firmware_version?: string | null } | null;
   plan?: DescentPlan | null; error?: string | null; bytes_received?: number;
   last?: { capture: string; flight_file?: { name: string; sha256: string }; note?: string } }
 
@@ -86,7 +87,7 @@ export function GroundPage() {
           {status.last && <div className="ok-line">Last session: {status.last.flight_file ? `filed ${status.last.flight_file.name}` : status.last.note ?? `capture ${status.last.capture}`}</div>}
         </Card>
       )}
-      {status.active && <GroundLive key={epoch} plan={status.plan ?? plan} />}
+      {status.active && <GroundLive key={epoch} plan={status.plan ?? plan} expected={status.expected_identity ?? null} />}
     </div>
   );
 }
@@ -112,7 +113,8 @@ function useStream(plan: DescentPlan | null) {
 }
 
 /** Pad go/no-go from live telemetry. */
-function PadStatus({ gs }: { gs: GroundStation }) {
+function PadStatus({ gs, expected }: { gs: GroundStation; expected: { firmware_hash?: string | null } | null }) {
+  const [fwStatus, fwDetail] = gs.firmwareCheck(expected);
   const p = gs.latest;
   const h = gs.sensorHealth;
   const q = gnssQuality(p?.gnssFix ?? 0, p?.gnssSats ?? 0);
@@ -124,6 +126,7 @@ function PadStatus({ gs }: { gs: GroundStation }) {
     ["Storage healthy", h?.storage === "OK", h?.storage ?? "—"],
     ["Battery", p.batteryMv >= 7400, `${fmt(p.batteryMv / 1000, 2)} V (≥ 7.40 V)`],
     ["GPS fix", q.label === "GOOD" || q.label === "FAIR", `${q.label}, ${p.gnssSats} sats`],
+    ["Firmware identity", fwStatus === "PASS", `${fwStatus}: ${fwDetail}`],
   ] : [];
   const ok = rows.length > 0 && rows.every((r) => r[1]);
   const inFlight = ["ASCENT", "COAST", "DESCENT", "LANDED"].includes(gs.state);
@@ -149,7 +152,7 @@ function PadStatus({ gs }: { gs: GroundStation }) {
   );
 }
 
-function GroundLive({ plan }: { plan: DescentPlan | null }) {
+function GroundLive({ plan, expected }: { plan: DescentPlan | null; expected: { firmware_hash?: string | null } | null }) {
   const gs = useStream(plan);
   const [showTable, setShowTable] = useState(false);
   const hist = gs.history;
@@ -185,7 +188,7 @@ function GroundLive({ plan }: { plan: DescentPlan | null }) {
           <LineChart title="Axial acceleration" unit="m/s²" digits={1} data={hist.map((h) => ({ t: h.t, v: h.acceleration }))} markers={markers} />
         </div>
         <div className="stack">
-          <PadStatus gs={gs} />
+          <PadStatus gs={gs} expected={expected} />
           <TrackMap track={track} estimate={estimate} estimateNote={gs.estimateNote} gnssLabel={q.label} gnssSigma={q.sigma} />
           <SensorHealth health={gs.sensorHealth} />
         </div>

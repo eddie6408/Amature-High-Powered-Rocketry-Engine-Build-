@@ -52,6 +52,10 @@ def build(scenario: str = "corrupted_packets") -> dict:
                       "duplicates": st.duplicates, "outOfOrder": st.out_of_order,
                       "lost": st.lost, "linkInterruptions": st.link_interruptions},
             "packetsAccepted": len(gs.history),
+            "identity": None if gs.rx.identity is None else {
+                "firmwareVersion": gs.rx.identity.firmware_version, "commit": gs.rx.identity.commit,
+                "hardwareVersion": gs.rx.identity.hardware_version, "firmwareHash": gs.rx.identity.firmware_hash,
+                "frames": st.identity_frames},
             "finalState": gs.status.state,
             "maxAltitude": _r(gs.status.max_altitude_m, 3),
             "firstPacket": {"sequence": first.sequence, "altitude": _r(first.altitude, 4),

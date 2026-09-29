@@ -74,10 +74,17 @@ event), so a reset in flight cannot re-arm or re-detect liftoff.
 
 ## Firmware identity
 
-Every build carries version, build timestamp and commit hash; the image
-SHA-256 and configuration SHA-256 are computed at release. The ground station
-and `run_preflight` compare them to the expected identity; any mismatch is
-`NOT READY`. All five values are stored in each flight record.
+Every build carries version, build timestamp and commit hash (injected by CMake).
+At boot, the image SHA-256 and configuration SHA-256 are computed and provisioned
+with `aero_app_set_identity_hashes()`. The application then transmits an **identity
+frame** (TELEMETRY-2, sync `0xD2AE`, 117 bytes, CRC-16) every 5 s between telemetry
+frames: vehicle/flight IDs, firmware version, commit, image hash, config hash and
+hardware version.
+
+The ground station verifies the reported image hash against the flight record
+(*Pad status → Firmware identity*): **PASS** on a match, **FAIL** on a mismatch or no
+identity heard, **WARN** when hashes are not provisioned or the flight record has no
+expected hash. All values are stored with the flight record.
 
 ## Verification
 

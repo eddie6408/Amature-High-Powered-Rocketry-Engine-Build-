@@ -150,6 +150,14 @@ function FlightView({ flightId, onChanged }: { flightId: string; onChanged: () =
         <h1>Flight {f.flight_id}</h1>
         <span className="muted">{f.vehicle_id} {f.revision} · {String(f.motor.manufacturer)} {String(f.motor.designation)} · {f.date}</span>
         <span className="spacer" />
+        <button onClick={async () => {
+          const r = await api.get<{ markdown: string }>(`/api/flights/${flightId}/report`);
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(new Blob([r.markdown], { type: "text/markdown" }));
+          a.download = `${flightId}-report.md`;
+          a.click();
+          URL.revokeObjectURL(a.href);
+        }}>Export report</button>
         <button onClick={() => go("ground")}>Open ground station</button>
       </div>
       <ErrorBox error={err} />

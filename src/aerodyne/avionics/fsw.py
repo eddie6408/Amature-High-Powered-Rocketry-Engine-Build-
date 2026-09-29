@@ -34,7 +34,7 @@ from aerodyne.avionics.state_machine import (
     FsmConfig,
     FsmInputs,
 )
-from aerodyne.avionics.telemetry import TelemetryPacket, pack_sensor_status
+from aerodyne.avionics.telemetry import IdentityPacket, TelemetryPacket, pack_sensor_status
 from aerodyne.dynamics import quaternion as quat
 
 
@@ -49,6 +49,8 @@ class FswConfig:
     baro_gate_sigma: float = 6.0            # innovation gate for baro updates
     descent_accel_sigma: float = 8.0         # process noise when accel is not usable
     identity: FirmwareIdentity | None = None
+    hardware_version: str = "FC-HW-001"
+    identity_period: float = 5.0             # s between identity frames
 
 
 class FlightSoftware:
@@ -74,6 +76,7 @@ class FlightSoftware:
         self.ground_alt: float | None = None
         self.t_prev: float | None = None
         self.next_tlm = 0.0
+        self.next_identity = 0.0
         self.sequence = int(self.nv.get("tlm_sequence", 0))
         self.faults: set[str] = set()
         self.max_est_alt = 0.0
@@ -130,7 +133,7 @@ class FlightSoftware:
         return self.health.get(name) == Health.OK and name in self.latest
 
     # ---- main cycle ----------------------------------------------------------------
-    def step(self, t: float, readings: dict[str, SensorReading]) -> TelemetryPacket | None:
+    def step(self, t: float, readings: dict[str, SensorReading]) -> TelemetryPacket | IdentityPacket | None:
         dt = 0.0 if self.t_prev is None else max(t - self.t_prev, 0.0)
         self.t_prev = t
 
@@ -264,6 +267,12 @@ class FlightSoftware:
         if t + 1e-9 >= self.next_tlm:
             self.next_tlm = t + self.cfg.telemetry_period
             return self._packet(t)
+        ident = self.cfg.identity
+        if ident is not None and t + 1e-9 >= self.next_identity:
+            self.next_identity = t + self.cfg.identity_period
+            return IdentityPacket(self.cfg.vehicle_id, self.cfg.flight_id, self.sequence, ident.version,
+                                  ident.commit_hash[:12], ident.firmware_hash, ident.config_hash,
+                                  self.cfg.hardware_version)
         return None
 
     def _packet(self, t: float) -> TelemetryPacket:

@@ -35,6 +35,28 @@ export interface TelemetryPacket {
   gnssSats: number;
 }
 
+export const ID_SYNC = 0xd2ae;
+export const ID_FRAME_SIZE = 117;
+
+export interface IdentityPacket {
+  vehicleId: number; flightId: number; sequence: number; firmwareVersion: string; commit: string;
+  firmwareHash: string; configHash: string; hardwareVersion: string;
+}
+
+const hex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+const cstr = (b: Uint8Array) => { const z = b.indexOf(0); return new TextDecoder().decode(z < 0 ? b : b.subarray(0, z)); };
+
+export function decodeIdentity(frame: Uint8Array): IdentityPacket {
+  if (frame.length !== ID_FRAME_SIZE) throw new DecodeError("bad identity frame length");
+  const dv = new DataView(frame.buffer, frame.byteOffset, frame.byteLength);
+  if (crc16ccitt(frame.subarray(0, ID_FRAME_SIZE - 2)) !== dv.getUint16(ID_FRAME_SIZE - 2, true)) throw new DecodeError("crc mismatch");
+  if (dv.getUint16(0, true) !== ID_SYNC || dv.getUint8(2) !== VERSION) throw new DecodeError("bad sync/version");
+  return { vehicleId: dv.getUint16(3, true), flightId: dv.getUint16(5, true), sequence: dv.getUint32(7, true),
+           firmwareVersion: cstr(frame.subarray(11, 27)), commit: cstr(frame.subarray(27, 39)),
+           firmwareHash: hex(frame.subarray(39, 71)), configHash: hex(frame.subarray(71, 103)),
+           hardwareVersion: cstr(frame.subarray(103, 115)) };
+}
+
 export function crc16ccitt(data: Uint8Array, crc = 0xffff): number {
   for (const b of data) {
     crc ^= b << 8;
@@ -103,6 +125,7 @@ export interface LinkStats {
   outOfOrder: number;
   lost: number;
   linkInterruptions: number;
+  identityFrames: number;
 }
 
 const seqNewer = (a: number, b: number) => {
@@ -115,8 +138,9 @@ const seqNewer = (a: number, b: number) => {
 export class TelemetryReceiver {
   stats: LinkStats = {
     framesOk: 0, crcFailures: 0, bytesDiscarded: 0, duplicates: 0, outOfOrder: 0, lost: 0,
-    linkInterruptions: 0,
+    linkInterruptions: 0, identityFrames: 0,
   };
+  identity: IdentityPacket | null = null;
   private buf = new Uint8Array(0);
   private highest: number | null = null;
   private seen = new Set<number>();
@@ -140,7 +164,7 @@ export class TelemetryReceiver {
     for (;;) {
       let idx = -1;
       for (let i = 0; i + 1 < b.length; i++) {
-        if (b[i] === 0xae && b[i + 1] === 0xd1) { idx = i; break; }
+        if (b[i] === 0xae && (b[i + 1] === 0xd1 || b[i + 1] === 0xd2)) { idx = i; break; }
       }
       if (idx < 0) {
         const keep = b.length && b[b.length - 1] === 0xae ? 1 : 0;
@@ -152,16 +176,28 @@ export class TelemetryReceiver {
         this.stats.bytesDiscarded += idx;
         b = b.slice(idx);
       }
-      if (b.length < FRAME_SIZE) break;
+      const isId = b[1] === 0xd2;
+      const size = isId ? ID_FRAME_SIZE : FRAME_SIZE;
+      if (b.length < size) break;
       let pkt: TelemetryPacket;
       try {
-        pkt = decode(b.slice(0, FRAME_SIZE));
+        if (isId) {
+          const id = decodeIdentity(b.slice(0, size));
+          b = b.slice(size);
+          if (this.vehicleId === null || id.vehicleId === this.vehicleId) {
+            this.identity = id;
+            this.stats.identityFrames++;
+            this.lastRx = rxTime;
+          }
+          continue;
+        }
+        pkt = decode(b.slice(0, size));
       } catch {
         this.stats.crcFailures++;
         b = b.slice(1);
         continue;
       }
-      b = b.slice(FRAME_SIZE);
+      b = b.slice(size);
       if (this.vehicleId !== null && pkt.vehicleId !== this.vehicleId) continue;
       const res = this.accept(pkt);
       if (res !== null) {

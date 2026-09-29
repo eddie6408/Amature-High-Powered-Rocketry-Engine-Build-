@@ -60,6 +60,15 @@ describe("ground station matches the Python reference", () => {
     expect(gs.packets.length).toBe(fixture.expected.packetsAccepted); // incl. late packets
   });
 
+  it("firmware identity frames", () => {
+    const e = fixture.expected.identity!;
+    expect(gs.rx.stats.identityFrames).toBe(e.frames);
+    expect(gs.rx.identity?.firmwareVersion).toBe(e.firmwareVersion);
+    expect(gs.rx.identity?.hardwareVersion).toBe(e.hardwareVersion);
+    expect(gs.rx.identity?.firmwareHash).toBe(e.firmwareHash);
+    expect(gs.firmwareCheck(null)[0]).toBe("WARN");      // hash not provisioned in SIL
+  });
+
   it("flight state and max altitude", () => {
     expect(gs.state).toBe(fixture.expected.finalState);
     expect(gs.maxAltitude).toBeCloseTo(fixture.expected.maxAltitude, 2);

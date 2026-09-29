@@ -180,6 +180,24 @@ static void test_telemetry_roundtrip(void)
     CHECK(aero_crc16_ccitt((const uint8_t *)"123456789", 9, 0xFFFF) == 0x29B1);
 }
 
+static void test_identity(void)
+{
+    aero_app_t app;
+    aero_app_init(&app, NULL, NULL);
+    uint8_t fw[32], cfg[32], buf[AERO_TLM_ID_FRAME_SIZE];
+    for (int i = 0; i < 32; i++) { fw[i] = (uint8_t)i; cfg[i] = (uint8_t)(255 - i); }
+    aero_app_set_identity_hashes(&app, fw, cfg);
+    CHECK(aero_app_identity(&app, 0.0, buf) == AERO_TLM_ID_FRAME_SIZE);
+    CHECK(aero_app_identity(&app, 1.0, buf) == 0);      /* not due again for 5 s */
+    CHECK(aero_app_identity(&app, 5.0, buf) == AERO_TLM_ID_FRAME_SIZE);
+    aero_tlm_identity_t id;
+    CHECK(aero_tlm_decode_identity(buf, sizeof buf, &id) == 0);
+    CHECK(memcmp(id.firmware_hash, fw, 32) == 0 && memcmp(id.config_hash, cfg, 32) == 0);
+    CHECK(strncmp(id.fw_version, "FW-", 3) == 0 && strncmp(id.hw_version, "FC-HW-001", 9) == 0);
+    buf[50] ^= 1;
+    CHECK(aero_tlm_decode_identity(buf, sizeof buf, &id) == -2);
+}
+
 static void test_validator(void)
 {
     aero_limits_t lim = {-500.0f, 30000.0f, 1500.0f, 100, 1, 20, 10};
@@ -312,6 +330,7 @@ int main(void)
     test_kalman();
     test_telemetry_roundtrip();
     test_validator();
+    test_identity();
     test_task_table();
     if (failures) {
         fprintf(stderr, "%d failure(s)\n", failures);

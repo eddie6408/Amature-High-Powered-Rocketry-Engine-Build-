@@ -1,5 +1,7 @@
 #include "aero_app.h"
 
+#include "aero_version.h"
+
 #include <math.h>
 #include <string.h>
 
@@ -90,6 +92,32 @@ void aero_app_default_config(aero_app_config_t *c)
     c->descent_accel_sigma = 8.0f;
     c->kf_accel_sigma = 2.0f;
     c->kf_baro_sigma = 1.5f;
+    /* identity strings from the build (hashes are provisioned at boot) */
+    const char *ver = aero_fw_version(), *commit = aero_fw_commit(), *hw = AERO_HW_VERSION;
+    memcpy(c->identity.fw_version, ver, strnlen(ver, sizeof c->identity.fw_version));
+    memcpy(c->identity.commit, commit, strnlen(commit, sizeof c->identity.commit));
+    memcpy(c->identity.hw_version, hw, strnlen(hw, sizeof c->identity.hw_version));
+    c->identity.vehicle_id = c->vehicle_id;
+    c->identity.flight_id = c->flight_id;
+    c->identity_period = 5.0f;
+}
+
+size_t aero_app_identity(aero_app_t *a, double t, uint8_t *buf)
+{
+    if (t + 1e-9 < a->next_identity) return 0;
+    a->next_identity = t + a->cfg.identity_period;
+    aero_tlm_identity_t id = a->cfg.identity;
+    id.vehicle_id = a->cfg.vehicle_id;
+    id.flight_id = a->cfg.flight_id;
+    id.sequence = a->sequence;
+    return aero_tlm_encode_identity(&id, buf);
+}
+
+void aero_app_set_identity_hashes(aero_app_t *a, const uint8_t firmware_hash[32],
+                                  const uint8_t config_hash[32])
+{
+    memcpy(a->cfg.identity.firmware_hash, firmware_hash, 32);
+    memcpy(a->cfg.identity.config_hash, config_hash, 32);
 }
 
 static bool ground_state(aero_state_t s)

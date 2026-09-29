@@ -59,7 +59,13 @@ class GroundSession:
             self.broadcaster = gserver.Broadcaster(capture=self.capture_path)
             self.stop_event = threading.Event()
             self.thread = threading.Thread(target=self._run, args=(fn,), daemon=True)
+            expected = None
+            if flight_id:
+                c = self.ws.flight(flight_id)["configuration"]
+                expected = {k: c.get(k) for k in ("hardware_version", "firmware_version", "firmware_hash",
+                                                   "firmware_commit")}
             self.info = {"active": True, "source": desc, "simulated": simulated, "flight_id": flight_id,
+                         "expected_identity": expected,
                          "started": stamp, "plan": plan, "capture": str(self.capture_path), "error": None}
             self.thread.start()
             return dict(self.info)

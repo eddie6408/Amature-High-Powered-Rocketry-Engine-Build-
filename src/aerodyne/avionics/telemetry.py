@@ -41,6 +41,17 @@ FRAME_SIZE = _BODY + 2
 SENSOR_SLOTS = ("imu_accel", "imu_gyro", "baro", "gnss", "battery", "temperature", "storage", "radio")
 
 
+# Identity frame (sync 0xD2AE, 117 bytes): the flight computer periodically
+# reports who it is so the ground station can verify firmware before flight.
+#   0 sync u16 | 2 version u8 | 3 vehicle_id u16 | 5 flight_id u16 | 7 sequence u32
+#  11 firmware_version char[16] | 27 commit char[12] | 39 firmware_hash u8[32]
+#  71 config_hash u8[32] | 103 hardware_version char[12] | 115 crc16
+ID_SYNC = 0xD2AE
+_ID_FMT = "<HBHHI16s12s32s32s12s"
+_ID_BODY = struct.calcsize(_ID_FMT)
+ID_FRAME_SIZE = _ID_BODY + 2
+
+
 def crc16_ccitt(data: bytes, crc: int = 0xFFFF) -> int:
     for b in data:
         crc ^= b << 8
@@ -98,6 +109,42 @@ class TelemetryPacket:
                    sensor_status=f[18], nav_status=f[19], gnss_fix=f[20], gnss_sats=f[21])
 
 
+@dataclass(frozen=True)
+class IdentityPacket:
+    vehicle_id: int
+    flight_id: int
+    sequence: int
+    firmware_version: str
+    commit: str
+    firmware_hash: str        # hex; all zeros = not provisioned
+    config_hash: str          # hex; all zeros = not provisioned
+    hardware_version: str
+
+    def encode(self) -> bytes:
+        body = struct.pack(_ID_FMT, ID_SYNC, VERSION, self.vehicle_id & 0xFFFF, self.flight_id & 0xFFFF,
+                           self.sequence & 0xFFFFFFFF, self.firmware_version.encode()[:16],
+                           self.commit.encode()[:12], bytes.fromhex(self.firmware_hash.rjust(64, "0")),
+                           bytes.fromhex(self.config_hash.rjust(64, "0")), self.hardware_version.encode()[:12])
+        return body + struct.pack("<H", crc16_ccitt(body))
+
+    @classmethod
+    def decode(cls, frame: bytes) -> "IdentityPacket":
+        if len(frame) != ID_FRAME_SIZE:
+            raise ValueError("bad identity frame length")
+        (crc,) = struct.unpack("<H", frame[_ID_BODY:])
+        if crc16_ccitt(frame[:_ID_BODY]) != crc:
+            raise ValueError("crc mismatch")
+        f = struct.unpack(_ID_FMT, frame[:_ID_BODY])
+        if f[0] != ID_SYNC or f[1] != VERSION:
+            raise ValueError("bad sync/version")
+        txt = lambda b: b.split(b"\0", 1)[0].decode(errors="replace")
+        return cls(f[2], f[3], f[4], txt(f[5]), txt(f[6]), f[7].hex(), f[8].hex(), txt(f[9]))
+
+    @property
+    def provisioned(self) -> bool:
+        return any(c != "0" for c in self.firmware_hash)
+
+
 def pack_sensor_status(health: dict[str, int]) -> int:
     word = 0
     for i, name in enumerate(SENSOR_SLOTS):
@@ -123,6 +170,7 @@ class LinkStats:
     out_of_order: int = 0
     lost: int = 0
     link_interruptions: int = 0
+    identity_frames: int = 0
 
     @property
     def packet_loss_rate(self) -> float:
@@ -145,6 +193,7 @@ class TelemetryReceiver:
     _missing: set[int] = field(default_factory=set)
     _last_rx: float | None = None
     link_up: bool = False
+    identity: IdentityPacket | None = None
 
     def feed(self, data: bytes, rx_time: float) -> list[tuple[TelemetryPacket, bool]]:
         """Returns [(packet, in_order)] accepted from this chunk."""
@@ -152,27 +201,36 @@ class TelemetryReceiver:
             self.stats.link_interruptions += 1
         self._buf.extend(data)
         out: list[tuple[TelemetryPacket, bool]] = []
-        sync = struct.pack("<H", SYNC)
+        syncs = (struct.pack("<H", SYNC), struct.pack("<H", ID_SYNC))
         while True:
-            idx = self._buf.find(sync)
-            if idx < 0:
-                keep = 1 if self._buf[-1:] == sync[:1] else 0
+            found = [i for i in (self._buf.find(s) for s in syncs) if i >= 0]
+            if not found:
+                keep = 1 if self._buf[-1:] == syncs[0][:1] else 0
                 self.stats.bytes_discarded += len(self._buf) - keep
                 del self._buf[:len(self._buf) - keep]
                 break
+            idx = min(found)
             if idx > 0:
                 self.stats.bytes_discarded += idx
                 del self._buf[:idx]
-            if len(self._buf) < FRAME_SIZE:
+            is_id = bytes(self._buf[:2]) == syncs[1]
+            size = ID_FRAME_SIZE if is_id else FRAME_SIZE
+            if len(self._buf) < size:
                 break
-            frame = bytes(self._buf[:FRAME_SIZE])
+            frame = bytes(self._buf[:size])
             try:
-                pkt = TelemetryPacket.decode(frame)
+                pkt = IdentityPacket.decode(frame) if is_id else TelemetryPacket.decode(frame)
             except ValueError:
                 self.stats.crc_failures += 1
                 del self._buf[:1]          # resync: skip this sync word
                 continue
-            del self._buf[:FRAME_SIZE]
+            del self._buf[:size]
+            if is_id:
+                if self.vehicle_id is None or pkt.vehicle_id == self.vehicle_id:
+                    self.identity = pkt
+                    self.stats.identity_frames += 1
+                    self._last_rx = rx_time
+                continue
             if self.vehicle_id is not None and pkt.vehicle_id != self.vehicle_id:
                 continue
             res = self._accept(pkt)

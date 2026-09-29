@@ -70,3 +70,40 @@ def motor_report(m: MotorPerformance) -> str:
     lines = [f"# Motor {s['designation']}", "", "| Field | Value |", "|---|---|"]
     lines += [f"| {k} | {_fmt(v)} |" for k, v in s.items()]
     return "\n".join(lines) + "\n"
+
+
+def flight_report(flight: dict, analysis: dict | None) -> str:
+    """Complete flight record as Markdown: configuration, raw-data integrity,
+    reconstruction vs prediction, possible contributors, provenance."""
+    c = flight["configuration"]
+    m = flight.get("motor", {})
+    lines = [f"# Flight report {flight['flight_id']}", "",
+             f"Date: {flight.get('date') or '—'} · Vehicle {flight['vehicle_id']} {flight['revision']} · "
+             f"Motor {m.get('manufacturer', '')} {m.get('designation', '')} ({m.get('data_quality', '?')})", "",
+             "## Flown configuration", "", "| Item | Value |", "|---|---|"]
+    lines += [f"| {k} | {_fmt(v) if v != '' else '—'} |" for k, v in c.items()]
+    lines += [f"| configuration hash | `{flight.get('configuration_hash', '')}` |", "",
+              "## Raw data (MEASURED, write-once)", "", "| File | Bytes | SHA-256 | Source |", "|---|---|---|---|"]
+    lines += [f"| {r['name']} | {r['bytes']} | `{r['sha256']}` | {r.get('source', '')} |"
+              for r in flight.get("raw_files", [])]
+    if not analysis:
+        lines += ["", "_Not analysed yet._"]
+        return "\n".join(lines) + "\n"
+    lines += ["", "## Simulation vs reality", "",
+              f"Actual data: **{analysis['actual_kind']}** from `{analysis['file']}`; prediction: "
+              f"{analysis.get('prediction_basis', '')}; digital twin: **{analysis['status']}**", "",
+              "| Metric | Simulated | Actual | Abs. error | % error |", "|---|---|---|---|---|"]
+    for r in analysis["comparison"]:
+        pct = "—" if r["pct_error"] is None else f"{r['pct_error']:+.1f} %"
+        lines.append(f"| {r['label']} [{r['units']}] | {_fmt(r['simulated'])} | {_fmt(r['actual'])} | "
+                     f"{_fmt(r['abs_error'])} | {pct} |")
+    lines += ["", "## Flight phases (reconstructed)", ""]
+    lines += [f"- {k}: {v:.2f} s" for k, v in (analysis.get("phases") or {}).items() if v is not None]
+    lines += ["", "## Possible contributors", "", "_Evidence-based candidates, not causal attributions._", ""]
+    lines += [f"- **{x['name']}**: {x['evidence']}. _Check:_ {x['suggested_check']}"
+              for x in analysis.get("contributors", [])]
+    if analysis.get("notes"):
+        lines += ["", "## Notes", ""] + [f"- {n}" for n in analysis["notes"]]
+    if analysis.get("motor_quality") not in ("CERTIFIED", "MANUFACTURER", "MEASURED"):
+        lines += ["", f"> Prediction used {analysis.get('motor_quality')} motor data."]
+    return "\n".join(lines) + "\n"
