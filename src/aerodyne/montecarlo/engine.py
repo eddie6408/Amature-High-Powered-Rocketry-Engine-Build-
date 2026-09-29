@@ -64,6 +64,11 @@ class UncertaintyModel:
     sea_level_pressure: Distribution = field(default_factory=lambda: Normal(101325.0, 500.0))
     elevation_deg: Distribution | None = None      # default: nominal +/- 1 deg
     azimuth_deg: Distribution | None = None
+    # when set, winds are dispersed around this profile instead of a power law:
+    # factory(speed_scale, direction_offset_deg) -> WindModel
+    wind_factory: Callable[[float, float], object] | None = None
+    wind_scale: Distribution = field(default_factory=lambda: Normal(1.0, 0.25))
+    wind_dir_offset: Distribution = field(default_factory=lambda: Normal(0.0, 20.0))
 
 
 @dataclass
@@ -143,15 +148,18 @@ class MonteCarloEngine:
             "elevation_deg": (u.elevation_deg or Normal(b.site.elevation_deg, 1.0)).sample(rng),
             "azimuth_deg": (u.azimuth_deg or Normal(b.site.azimuth_deg, 2.0)).sample(rng),
             "gust_seed": int(rng.integers(0, 2 ** 31 - 1)),
+            "wind_scale": max(0.0, u.wind_scale.sample(rng)),
+            "wind_dir_offset": u.wind_dir_offset.sample(rng),
         }
+        base_wind = (u.wind_factory(s["wind_scale"], s["wind_dir_offset"]) if u.wind_factory
+                     else PowerLawWind(s["wind_speed"], s["wind_from_deg"]))
         s["elevation_deg"] = min(s["elevation_deg"], 90.0)
         cfg = replace(
             b,
             motor=b.motor.scaled(s["impulse_scale"], s["burn_time_scale"]),
             aero=ScaledAeroModel(b.aero, s["cd_scale"], s["cn_alpha_scale"], s["xcp_shift"]),
             atmosphere=StandardAtmosphere(s["temperature_offset"], s["sea_level_pressure"]),
-            wind=GustWind(PowerLawWind(s["wind_speed"], s["wind_from_deg"]), s["gust_sigma"],
-                          seed=s["gust_seed"]),
+            wind=GustWind(base_wind, s["gust_sigma"], seed=s["gust_seed"]),
             site=replace(b.site, elevation_deg=s["elevation_deg"], azimuth_deg=s["azimuth_deg"]),
             dry_mass_scale=s["dry_mass_scale"], dry_cg_shift=s["dry_cg_shift"], dt=self.dt,
         )

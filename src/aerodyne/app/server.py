@@ -51,6 +51,8 @@ class App:
         # motors
         r("GET", r"/api/motors", lambda q, b: svc.list_motors(ws_))
         r("GET", r"/api/motors/(?P<key>[0-9a-f]+)", lambda q, b, key: svc.motor_curve(ws_, key))
+        r("POST", r"/api/motors/static-test", lambda q, b: svc.static_test(ws_, b))
+        r("POST", r"/api/wind/parse", lambda q, b: svc.parse_wind(b))
         r("POST", r"/api/motors/import", lambda q, b: svc.import_motor(
             ws_, b["text"], b.get("quality", "UNKNOWN"), b.get("source", ""), b.get("source_date", "")))
         # missions and runs

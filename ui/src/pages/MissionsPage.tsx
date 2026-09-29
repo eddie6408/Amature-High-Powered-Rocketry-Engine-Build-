@@ -51,6 +51,50 @@ const blank = (): Mission => ({
                  temperature_sigma_k: 5, elevation_sigma_deg: 1, azimuth_sigma_deg: 2 },
 });
 
+function WindProfileEditor({ m, set }: { m: Mission; set: (fn: (x: Mission) => void) => void }) {
+  const [ref, setRef] = useState("AGL");
+  const [msg, setMsg] = useState<string | null>(null);
+  const alts = (m.wind.altitudes as number[]) ?? [];
+  const spd = (m.wind.speeds as number[]) ?? [];
+  const dir = (m.wind.from_deg as unknown as number[]) ?? [];
+  const importText = async (text: string) => {
+    try {
+      const w = await api.post<Record<string, unknown> & { units_detected: Record<string, string> }>("/api/wind/parse",
+        { text, altitude_ref: ref, site_altitude_msl: m.site.altitude_msl });
+      set((x) => { x.wind = { model: "layered", altitudes: w.altitudes, speeds: w.speeds, from_deg: w.from_deg }; });
+      const u = w.units_detected;
+      setMsg(`imported ${(w.altitudes as number[]).length} levels (altitude ${u.altitude} ${u.reference}, speed ${u.speed}) - check them below`);
+    } catch (e) { setMsg((e as Error).message); }
+  };
+  return (
+    <div className="wind-profile">
+      <div className="form grid-form">
+        <SelectField label="Imported altitudes are" value={ref} onChange={setRef} options={[["AGL", "above the pad (AGL)"], ["MSL", "above sea level (MSL)"]]} />
+        <label className="field"><span>Import forecast / sounding (CSV: altitude, speed, direction)</span>
+          <input type="file" accept=".csv,.txt,.tsv" onChange={async (e) => { const f = e.target.files?.[0]; if (f) await importText(await f.text()); e.target.value = ""; }} /></label>
+      </div>
+      {msg && <div className="note">{msg}</div>}
+      <table className="stats">
+        <thead><tr><th>Altitude AGL (m)</th><th>Speed (m/s)</th><th>From (°)</th><th></th></tr></thead>
+        <tbody>{alts.map((_, i) => (
+          <tr key={i}>
+            {[alts, spd, dir].map((arr, k) => (
+              <td key={k}><input type="number" step="any" value={arr[i]} onChange={(e) => set((x) => {
+                const key = (["altitudes", "speeds", "from_deg"] as const)[k];
+                (x.wind[key] as number[])[i] = Number(e.target.value);
+              })} /></td>))}
+            <td><button className="link danger" onClick={() => set((x) => { for (const k of ["altitudes", "speeds", "from_deg"] as const) (x.wind[k] as number[]).splice(i, 1); })}>remove</button></td>
+          </tr>))}
+        </tbody>
+      </table>
+      <button onClick={() => set((x) => { const n = alts.length;
+        (x.wind.altitudes as number[]).push(n ? alts[n - 1] + 500 : 0); (x.wind.speeds as number[]).push(n ? spd[n - 1] : 3);
+        (x.wind.from_deg as unknown as number[]).push(n ? dir[n - 1] : 270); })}>Add level</button>
+      <div className="note">Monte Carlo disperses this profile (speed ×N(1, σ), direction ± σ) instead of a generic power law.</div>
+    </div>
+  );
+}
+
 function MissionView({ missionId, onSaved }: { missionId: string; onSaved: () => void }) {
   const [m, setM] = useState<Mission | null>(null);
   const [vehicles, setVehicles] = useState<VehicleSummary[]>([]);
@@ -141,15 +185,24 @@ function MissionView({ missionId, onSaved }: { missionId: string; onSaved: () =>
         </div>
         <h3>Wind &amp; atmosphere</h3>
         <div className="form grid-form">
-          <SelectField label="Wind model" value={String(m.wind.model)} onChange={(v) => set((x) => { x.wind.model = v; })}
-                       options={[["power_law", "Power law (surface ref. 10 m)"], ["constant", "Constant with altitude"]]} />
-          <NumberField label="Wind speed" unit="m/s" value={m.wind.speed as number} onChange={(v) => set((x) => { x.wind.speed = v ?? 0; })} />
-          <NumberField label="Wind from" unit="°" value={m.wind.from_deg as number} onChange={(v) => set((x) => { x.wind.from_deg = v ?? 0; })} />
+          <SelectField label="Wind model" value={String(m.wind.model)} onChange={(v) => set((x) => {
+            x.wind.model = v;
+            if (v === "layered" && !Array.isArray(x.wind.altitudes)) {
+              const s = Number(x.wind.speed ?? 3), d = Number(x.wind.from_deg ?? 270);
+              x.wind.altitudes = [0, 300, 1000]; x.wind.speeds = [s, s * 1.4, s * 1.8]; x.wind.from_deg = [d, d, d];
+            }
+          })} options={[["power_law", "Power law (surface ref. 10 m)"], ["constant", "Constant with altitude"],
+                        ["layered", "Measured / forecast profile"]]} />
+          {m.wind.model !== "layered" && <>
+            <NumberField label="Wind speed" unit="m/s" value={m.wind.speed as number} onChange={(v) => set((x) => { x.wind.speed = v ?? 0; })} />
+            <NumberField label="Wind from" unit="°" value={m.wind.from_deg as number} onChange={(v) => set((x) => { x.wind.from_deg = v ?? 0; })} />
+          </>}
           <NumberField label="Temperature offset from standard" unit="K" value={m.atmosphere.temperature_offset}
                        onChange={(v) => set((x) => { x.atmosphere.temperature_offset = v ?? 0; })} />
           <NumberField label="Sea-level pressure" unit="Pa" value={m.atmosphere.sea_level_pressure}
                        onChange={(v) => set((x) => { x.atmosphere.sea_level_pressure = v ?? 101325; })} />
         </div>
+        {m.wind.model === "layered" && <WindProfileEditor m={m} set={set} />}
         <h3>Limits <span className="muted">(set from your safety code, waiver and field)</span></h3>
         <div className="form grid-form">
           {([["min_margin_cal", "Min static margin", "cal"], ["max_margin_cal", "Max static margin", "cal"],

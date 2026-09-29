@@ -272,3 +272,5 @@ details.component summary { cursor: pointer; font-size: 13px; display: flex; fle
 .legend .key.dashed { background: repeating-linear-gradient(90deg, var(--series-1) 0 4px, transparent 4px 6px); }
 .legend .key.s2.dashed { background: repeating-linear-gradient(90deg, var(--series-2) 0 4px, transparent 4px 6px); }
 .tooltip .key.s2 { background: var(--series-2); }
+.wind-profile table input { width: 100%; }
+.wind-profile { margin: 8px 0; }

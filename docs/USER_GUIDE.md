@@ -57,6 +57,11 @@ as you type. Pick the motor for analysis at the top to see loaded and burnout st
 
 ## 2. Motors
 
+**Static tests.** If you static-test commercial motors, *Characterize a static test* reads the
+raw load-cell log (CSV; N, lbf or kgf; s or ms). It removes the tare, finds the burn window and
+reports impulse with a 1σ uncertainty (calibration plus noise). It can save the result as a
+**MEASURED** dataset, with the raw log's SHA-256 recorded in its source.
+
 Import the **certified or manufacturer** thrust curve (RASP `.eng`, for example from
 ThrustCurve.org) for every motor you might fly. Declare its quality and source honestly.
 Several datasets for one motor sit side by side and are never merged. Readiness fails on
@@ -69,6 +74,9 @@ length, angle and azimuth), wind and atmosphere, and **limits**. Set the limits 
 safety code, waiver and field: minimum stability, rail-exit speed, thrust-to-weight,
 altitude ceiling, recovery-field radius and descent rates.
 
+* **Wind.** Choose *Measured / forecast profile* to enter wind by altitude, or import a
+  forecast or sounding CSV (altitude, speed, direction; ft/m, kt/mph/m/s; AGL or MSL). The
+  Monte Carlo then disperses that profile instead of a generic one.
 * **Simulate** runs the 6-DOF prediction: apogee, speeds, loads, stability over the burn,
   deployment speeds and landing point.
 * **Monte Carlo** disperses mass, CG, impulse, burn time, drag, wind, temperature and rail

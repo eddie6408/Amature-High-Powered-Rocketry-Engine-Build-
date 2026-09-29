@@ -510,6 +510,60 @@ def cad_part(data: dict) -> dict:
     return {"components": _clean(comps)}
 
 
+def parse_wind(data: dict) -> dict:
+    from aerodyne.environment.wind_import import parse_wind_profile
+
+    try:
+        return parse_wind_profile(data["text"], data.get("altitude_ref", "AGL"),
+                                  float(data.get("site_altitude_msl", 0.0)))
+    except (ValueError, KeyError) as exc:
+        raise BadRequest(str(exc)) from exc
+
+
+_FORCE = {"N": 1.0, "lbf": 4.4482216, "kgf": 9.80665}
+_TIME_U = {"s": 1.0, "ms": 1e-3, "us": 1e-6}
+
+
+def static_test(ws: Workspace, data: dict) -> dict:
+    """Characterize a load-cell recording of a (commercial/certified) motor test.
+    Returns the analysis; with ``save`` it stores a MEASURED motor dataset plus the
+    raw recording hash as its source."""
+    import hashlib
+
+    from aerodyne.analysis.flightlog import _parse_rows
+    from aerodyne.propulsion.analyzer import analyze_thrust_data
+
+    raw = base64.b64decode(data["b64"]) if "b64" in data else data["text"].encode()
+    try:
+        header, rows = _parse_rows(raw.decode(errors="replace"))
+        it, iff = header.index(data["time_col"]), header.index(data["force_col"])
+        t = np.array([float(r[it]) for r in rows]) * _TIME_U[data.get("time_unit", "s")]
+        f = np.array([float(r[iff]) for r in rows]) * _FORCE[data.get("force_unit", "N")]
+        res = analyze_thrust_data(t, f, float(data.get("threshold", 0.05)),
+                                  float(data.get("calibration_uncertainty", 0.01)))
+    except (ValueError, KeyError, IndexError) as exc:
+        raise BadRequest(f"could not analyse the test: {exc}") from exc
+    idx = decimate_indices(len(res.time), 600)
+    ridx = decimate_indices(len(res.raw_time), 900)
+    out = {"summary": res.summary(), "warnings": res.warnings, "columns": header,
+           "curve": {"t": res.time[idx], "thrust": res.thrust[idx]},
+           "raw": {"t": res.raw_time[ridx] - res.ignition_time, "force": res.raw_force[ridx]},
+           "sha256": hashlib.sha256(raw).hexdigest(), "saved_key": None}
+    if data.get("save"):
+        for k in ("manufacturer", "designation", "total_mass", "source_date"):
+            if not data.get(k):
+                raise BadRequest(f"{k} is required to save the dataset")
+        prop = float(data["propellant_mass"]) if data.get("propellant_mass") else None
+        motor = res.to_motor(data["manufacturer"], data["designation"], float(data["total_mass"]), prop,
+                             source=f"static test {data.get('test_id', '')} (raw sha256 {out['sha256'][:16]})",
+                             source_date=data["source_date"], certification=data.get("certification"))
+        try:
+            out["saved_key"] = ws.add_motor(motor)
+        except ValueError as exc:
+            raise BadRequest(str(exc)) from exc
+    return _clean(out)
+
+
 # ----------------------------------------------------------------------------------- jobs
 class JobManager:
     """Runs long operations (Monte Carlo, SIL suite) in background threads."""

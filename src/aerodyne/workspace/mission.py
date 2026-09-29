@@ -84,15 +84,28 @@ class Mission:
     def uncertainty_model(self) -> UncertaintyModel:
         u = self.uncertainty
         s = self.site
+        factory = None
+        if self.wind.get("model") == "layered":
+            w = self.wind
+
+            def factory(scale: float, offset: float) -> LayeredWind:
+                return LayeredWind(w["altitudes"], [v * scale for v in w["speeds"]],
+                                   [d + offset for d in w["from_deg"]])
         return UncertaintyModel(
+            wind_factory=factory,
+            wind_scale=Normal(1.0, u.get("wind_speed_rel_sigma", 0.25)),
+            wind_dir_offset=Normal(0.0, u["wind_dir_sigma_deg"]),
             dry_mass_scale=Normal(1.0, u["dry_mass_rel_sigma"]),
             dry_cg_shift=Normal(0.0, u["cg_sigma_m"]),
             impulse_scale=Normal(1.0, u["impulse_rel_sigma"]),
             burn_time_scale=Normal(1.0, u["burn_time_rel_sigma"]),
             cd_scale=Normal(1.0, u["cd_rel_sigma"]),
             # dispersions around the mission's forecast wind (surface reference speed)
-            wind_speed=Normal(self.wind.get("speed", 0.0), u["wind_speed_sigma"]),
-            wind_from_deg=Normal(self.wind.get("from_deg", 0.0), u["wind_dir_sigma_deg"]),
+            # surface-wind dispersion (used when the wind is not a layered profile)
+            wind_speed=Normal(float(self.wind.get("speed", 0.0) or 0.0) if factory is None else 0.0,
+                              u["wind_speed_sigma"]),
+            wind_from_deg=Normal(float(self.wind.get("from_deg", 0.0)) if factory is None else 0.0,
+                                 u["wind_dir_sigma_deg"]),
             gust_sigma=Uniform(0.0, u["gust_sigma_max"]),
             temperature_offset=Normal(self.atmosphere.get("temperature_offset", 0.0),
                                       u["temperature_sigma_k"]),
