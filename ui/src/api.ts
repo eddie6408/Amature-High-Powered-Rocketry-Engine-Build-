@@ -63,5 +63,7 @@ export interface Motor { key: string; designation: string; manufacturer: string;
   data_quality: string }
 export interface Mission { id: string; name: string; vehicle_id: string; revision: string; motor_key: string;
   site: Record<string, number>; wind: Record<string, unknown>; atmosphere: Record<string, number>;
-  limits: Record<string, number | null>; uncertainty: Record<string, number>; site_id?: string }
+  limits: Record<string, number | null>; uncertainty: Record<string, number>; site_id?: string;
+  motors?: MotorGroupSpec[]; separations?: Array<{ stage: number; delay: number; parallel: boolean }> }
+export interface MotorGroupSpec { motor_key: string; count: number; stage: number; ignition: "launch" | "time" | "separation"; delay: number }
 export type Summary = Record<string, number | string | null>;

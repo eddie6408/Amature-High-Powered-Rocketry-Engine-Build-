@@ -157,6 +157,7 @@ class MonteCarloEngine:
         cfg = replace(
             b,
             motor=b.motor.scaled(s["impulse_scale"], s["burn_time_scale"]),
+            propulsion=None if b.propulsion is None else b.propulsion.scaled(s["impulse_scale"], s["burn_time_scale"]),
             aero=ScaledAeroModel(b.aero, s["cd_scale"], s["cn_alpha_scale"], s["xcp_shift"]),
             atmosphere=StandardAtmosphere(s["temperature_offset"], s["sea_level_pressure"]),
             wind=GustWind(base_wind, s["gust_sigma"], seed=s["gust_seed"]),

@@ -65,6 +65,7 @@ class Component:
     # external pods / side boosters: identical copies spaced around the axis at radial_offset
     instances: int = 1
     radial_offset: float = 0.0
+    stage: int = 0          # 0 = top stage (sustainer / core); 1 = the stage below or side boosters, ...
 
     # -- to be provided by subclasses -----------------------------------
     def estimated_mass(self) -> float:

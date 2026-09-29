@@ -29,7 +29,7 @@ class Vehicle:
 
     def add(self, c: Component) -> Component:
         self.components.append(c)
-        if isinstance(c, MotorSlot):
+        if isinstance(c, MotorSlot) and ("pod" not in c.tags or self.motor_slot is None):
             self.motor_slot = c
         return c
 
@@ -60,6 +60,24 @@ class Vehicle:
         import math
 
         return math.pi * self.reference_diameter ** 2 / 4
+
+    @property
+    def stages(self) -> list[int]:
+        return sorted({c.stage for c in self.components})
+
+    def motor_slot_for(self, stage: int) -> MotorSlot | None:
+        """The motor slot of a stage (the vehicle's own slot for stage 0 if none is tagged)."""
+        slots = [c for c in self.components if isinstance(c, MotorSlot) and c.stage == stage]
+        return slots[-1] if slots else (self.motor_slot if stage == 0 else None)
+
+    def subset(self, stages: set[int] | frozenset[int]) -> "Vehicle":
+        """The rocket made of these stages only (after the others have separated)."""
+        v = Vehicle(name=self.name, launch_lug_drag_area=self.launch_lug_drag_area if 0 in stages else 0.0,
+                    surface_roughness=self.surface_roughness)
+        for c in self.components:
+            if c.stage in stages:
+                v.add(c)
+        return v
 
     def nose(self) -> NoseCone | None:
         return next((c for c in self.components if isinstance(c, NoseCone) and self.on_axis(c)), None)
@@ -114,7 +132,7 @@ class Vehicle:
     # ---- serialization (digital twin / configuration hash) ---------------
     def to_dict(self) -> dict[str, Any]:
         # optional fields added later are written only when set, so existing designs keep their hash
-        optional = {"instances": 1, "radial_offset": 0.0, "shear_modulus_gpa": None}
+        optional = {"instances": 1, "radial_offset": 0.0, "shear_modulus_gpa": None, "stage": 0}
         custom: dict[str, dict[str, Any]] = {}
 
         def enc(c: Component) -> dict[str, Any]:

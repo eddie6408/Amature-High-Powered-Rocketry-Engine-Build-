@@ -43,7 +43,7 @@ def _fmt(v, nd=1):
 
 
 def review(design: Design, motor: MotorPerformance, limits: Limits, nominal: SimulationResult,
-           monte_carlo: dict | None = None, sil: dict | None = None, atmosphere=None) -> dict:
+           monte_carlo: dict | None = None, sil: dict | None = None, atmosphere=None, propulsion=None) -> dict:
     checks: list[Check] = []
     add = checks.append
     v = design.vehicle
@@ -54,12 +54,17 @@ def review(design: Design, motor: MotorPerformance, limits: Limits, nominal: Sim
               "; ".join(problems) or "no problems", "nose, fins, motor slot present; positive masses",
               True, "design"))
 
-    q = motor.metadata.data_quality
-    ok_q = q in (DataQuality.CERTIFIED, DataQuality.MANUFACTURER, DataQuality.MEASURED)
+    multi = propulsion is not None and not propulsion.is_simple
+    motors = [g.motor for g in propulsion.groups] if multi else [motor]
+    good = (DataQuality.CERTIFIED, DataQuality.MANUFACTURER, DataQuality.MEASURED)
+    bad = [mt for mt in motors if mt.metadata.data_quality not in good]
+    q = (bad[0] if bad else motor).metadata.data_quality
+    ok_q = not bad
     add(Check("motor_data", "Motor data quality", "PASS" if ok_q else "FAIL",
-              f"{motor.metadata.designation}: {q.value}", "CERTIFIED, MANUFACTURER or MEASURED",
+              ", ".join(f"{mt.metadata.designation}: {mt.metadata.data_quality.value}" for mt in motors),
+              "CERTIFIED, MANUFACTURER or MEASURED" + (" for every motor" if multi else ""),
               True, motor.metadata.source,
-              "" if ok_q else "import the certified thrust curve for the motor you will fly"))
+              "" if ok_q else "import the certified thrust curve for every motor you will fly"))
 
     # stability
     t_rail = nominal.event_time("rail_exit") or 0.0
@@ -86,6 +91,11 @@ def review(design: Design, motor: MotorPerformance, limits: Limits, nominal: Sim
     liftoff_mass = MassPropertiesEngine(v).configuration("FULL", motor).mass
     t_early = np.linspace(0, min(0.5, motor.burn_time), 26)
     tw = float(np.mean([motor.thrust_at(x) for x in t_early])) / (liftoff_mass * G0)
+    if multi:                           # every motor lit at launch, and the mass with all motors loaded
+        liftoff_mass = float(nominal.mass[0])
+        lit = [g for g in propulsion.groups if g.ignition == "launch"]
+        t_early = np.linspace(0, min(0.5, min(g.motor.burn_time for g in lit)), 26)
+        tw = float(np.mean([sum(g.count * g.motor.thrust_at(x) for g in lit) for x in t_early])) / (liftoff_mass * G0)
     add(Check("thrust_to_weight", "Thrust-to-weight (first 0.5 s)",
               "PASS" if tw >= limits.min_thrust_to_weight else "FAIL", f"{tw:.1f} : 1",
               f"≥ {limits.min_thrust_to_weight:.1f} : 1", True,

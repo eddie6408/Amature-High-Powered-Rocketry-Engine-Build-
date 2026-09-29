@@ -23,9 +23,10 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from aerodyne.aero.model import AeroModel, FlightCondition
+from aerodyne.aero.model import AeroModel, FlightCondition, ScaledAeroModel
 from aerodyne.core.provenance import DataKind
 from aerodyne.dynamics import quaternion as quat
+from aerodyne.dynamics.propulsion_system import PropulsionSystem
 from aerodyne.environment.atmosphere import G0, AtmosphereModel, StandardAtmosphere
 from aerodyne.environment.wind import ConstantWind, WindModel
 from aerodyne.propulsion.motor import MotorPerformance
@@ -71,6 +72,7 @@ class SimulationConfig:
     dry_mass_scale: float = 1.0      # Monte Carlo / what-if; != 1 marks results HYPOTHETICAL
     dry_cg_shift: float = 0.0        # m
     stop_at_apogee: bool = False
+    propulsion: PropulsionSystem | None = None   # clusters / stages / airstarts; None: ``motor`` alone
 
 
 @dataclass
@@ -97,6 +99,7 @@ class SimulationResult:
     reference_diameter: float
     kind: DataKind = DataKind.SIMULATED
     notes: list[str] = field(default_factory=list)
+    bodies: list[dict] = field(default_factory=list)   # separated stages flown to the ground
 
     @property
     def stability_margin(self) -> np.ndarray:
@@ -160,9 +163,126 @@ class FlightSimulator:
         self.k_motor = slot.inertia_per_mass()
         self.S = config.aero.reference_area
         self.d = config.aero.reference_diameter
+        self.aero = config.aero
+        # several motors / stages: the general path (a single motor keeps the original, exact path)
+        self.prop = config.propulsion
+        if self.prop is not None and self.prop.is_simple:      # one motor: the plain path, with that motor
+            from dataclasses import replace as _replace
+
+            self.cfg = config = _replace(config, motor=self.prop.groups[0].motor, propulsion=None)
+            self.prop = None
+        self.simple = self.prop is None
+        if not self.simple:
+            self._setup_multi()
+
+    # ---- several motors, stages ------------------------------------------------------------
+    def _setup_multi(self) -> None:
+        v = self.cfg.vehicle
+        groups = self.prop.groups
+        self.gx: list[float] = []
+        for g in groups:
+            if g.x is not None:
+                self.gx.append(g.x)
+                continue
+            sl = v.motor_slot_for(g.stage)
+            if sl is None:
+                raise ValueError(f"stage {g.stage} has no motor slot for {g.motor.metadata.designation}")
+            self.gx.append(sl.cg)
+        self.attached: set[int] = set(v.stages) | {g.stage for g in groups}
+        self.t_ign: list[float | None] = [0.0 if g.ignition == "launch" else None for g in groups]
+        self.stage_burnout: dict[int, float] = {}
+        self.separated: list[dict] = []
+        self._dry_cache: dict[frozenset, tuple[float, float, float, float]] = {}
+        self._aero_cache: dict[frozenset, AeroModel] = {frozenset(self.attached): self.cfg.aero}
+
+    def _dry(self) -> tuple[float, float, float, float]:
+        key = frozenset(self.attached)
+        if key not in self._dry_cache:
+            d = MassPropertiesEngine(self.cfg.vehicle.subset(key)).dry()
+            k = self.cfg.dry_mass_scale
+            self._dry_cache[key] = (d.mass * k, d.cg + self.cfg.dry_cg_shift, d.ixx * k, d.iyy * k)
+        return self._dry_cache[key]
+
+    def _aero_for(self, stages: frozenset) -> AeroModel:
+        if stages not in self._aero_cache:
+            from aerodyne.aero.analytical import AnalyticalAeroModel
+
+            base: AeroModel = AnalyticalAeroModel(self.cfg.vehicle.subset(stages))
+            a = self.cfg.aero
+            if isinstance(a, ScaledAeroModel):
+                base = ScaledAeroModel(base, a.cd_scale, a.cn_alpha_scale, a.xcp_shift)
+            self._aero_cache[stages] = base
+        return self._aero_cache[stages]
+
+    def _motors(self, t: float) -> tuple[float, list[tuple[float, float]]]:
+        """Total thrust and (mass, station) of every attached motor group at time t."""
+        thrust, masses = 0.0, []
+        for i, g in enumerate(self.prop.groups):
+            if g.stage not in self.attached:
+                continue
+            ti = self.t_ign[i]
+            if ti is None or t < ti:
+                masses.append((g.count * g.motor.total_mass, self.gx[i]))
+                continue
+            tau = t - ti
+            masses.append((g.count * g.motor.mass_at(tau), self.gx[i]))
+            thrust += g.count * g.motor.thrust_at(tau)
+        return thrust, masses
+
+    def thrust(self, t: float) -> float:
+        return self.cfg.motor.thrust_at(t) if self.simple else self._motors(t)[0]
+
+    def _stage_events(self, t: float, r: np.ndarray, v: np.ndarray, events: list) -> None:
+        """Airstarts, stage burnout and separation, ignition of the stage above (between steps)."""
+        groups = self.prop.groups
+        for i, g in enumerate(groups):
+            if g.ignition == "time" and self.t_ign[i] is None and t >= g.delay and g.stage in self.attached:
+                self.t_ign[i] = t
+                events.append((t, f"ignition:{g.stage}"))
+        for k in sorted(self.attached, reverse=True):
+            sep = self.prop.separation(k)
+            if sep is None:
+                continue
+            idx = [i for i, g in enumerate(groups) if g.stage == k]
+            if any(self.t_ign[i] is None for i in idx):
+                continue
+            end = max(self.t_ign[i] + groups[i].motor.burn_time for i in idx)
+            if t >= end and k not in self.stage_burnout:
+                self.stage_burnout[k] = end
+                events.append((end, f"burnout:{k}"))
+            if k in self.stage_burnout and t >= self.stage_burnout[k] + sep.delay:
+                spent = sum(groups[i].count * groups[i].motor.mass_at(t - self.t_ign[i]) for i in idx)
+                sub = self.cfg.vehicle.subset({k})
+                dry = MassPropertiesEngine(sub).dry()
+                comps = [c for c in sub.components if c.length > 0 and "internal" not in c.tags]
+                length = max((c.x + c.length for c in comps), default=0.3) - min((c.x for c in comps), default=0.0)
+                diam = max((getattr(c, "outer_diameter", 0.0) or getattr(c, "diameter", 0.0) for c in comps), default=0.05)
+                self.separated.append({"stage": k, "t": t, "r": r.copy(), "v": v.copy(), "mass": dry.mass + spent,
+                                       "length": length, "diameter": diam, "parallel": sep.parallel,
+                                       "count": max((c.instances for c in sub.components), default=1)})
+                self.attached.discard(k)
+                events.append((t, f"separation:{k}"))
+                self.aero = self._aero_for(frozenset(self.attached))
+                self.S, self.d = self.aero.reference_area, self.aero.reference_diameter
+                for j, gg in enumerate(groups):
+                    if gg.ignition == "separation" and gg.stage == k - 1 and self.t_ign[j] is None:
+                        self.t_ign[j] = t + gg.delay
+                        events.append((t + gg.delay, f"ignition:{gg.stage}"))
+
+    def _burn_end(self) -> float | None:
+        ends = [ti + g.motor.burn_time for ti, g in zip(self.t_ign, self.prop.groups) if ti is not None]
+        return max(ends) if ends else None
 
     # ---- mass properties at time t (analytic, fast) ---------------------
     def mass_props(self, t: float) -> tuple[float, float, float, float]:
+        if not self.simple:
+            md, cgd, ixd, iyd = self._dry()
+            _, motors = self._motors(t)
+            m = md + sum(mi for mi, _ in motors)
+            cg = (md * cgd + sum(mi * xi for mi, xi in motors)) / m
+            ixx = ixd + sum(mi * self.k_motor[0] for mi, _ in motors)
+            iyy = iyd + md * (cgd - cg) ** 2 + sum(mi * self.k_motor[1] + mi * (xi - cg) ** 2 for mi, xi in motors)
+            return m, cg, ixx, iyy
         mm = self.cfg.motor.mass_at(t)
         m = self.m_dry + mm
         cg = (self.m_dry * self.cg_dry + mm * self.x_motor) / m
@@ -185,7 +305,7 @@ class FlightSimulator:
         R = quat.to_matrix(q)
         v_air_b = R.T @ (v - wind)
         V = float(np.linalg.norm(v_air_b))
-        thrust = self.cfg.motor.thrust_at(t)
+        thrust = self.thrust(t)
         F_b = np.array([thrust, 0.0, 0.0])
         M_b = np.zeros(3)
         mach = alpha = 0.0
@@ -195,7 +315,7 @@ class FlightSimulator:
             mach = V / atm.speed_of_sound
             v_perp = np.array([0.0, v_air_b[1], v_air_b[2]])
             alpha = math.atan2(float(np.linalg.norm(v_perp)), float(v_air_b[0]))
-            c = self.cfg.aero.coefficients(FlightCondition(
+            c = self.aero.coefficients(FlightCondition(
                 mach=mach, reynolds_per_m=V / atm.kinematic_viscosity, alpha=alpha,
                 altitude=r[2] + self.cfg.site.altitude_msl, thrusting=thrust > 0))
             xcp = c.xcp
@@ -249,18 +369,22 @@ class FlightSimulator:
         t, s, sdot = 0.0, 0.0, 0.0
         h = cfg.dt
         m0 = self.mass_props(0.0)[0]
-        if cfg.motor.peak_thrust <= m0 * G0 * u[2]:
+        peak = cfg.motor.peak_thrust if self.simple else sum(
+            g.count * g.motor.peak_thrust for g in self.prop.groups if g.ignition == "launch")
+        if peak <= m0 * G0 * u[2]:
             raise ValueError("motor peak thrust does not exceed vehicle weight - no liftoff")
         liftoff = False
         while s < cfg.site.rail_length:
             m, cg, _, _ = self.mass_props(t)
             atm, _, g = self._env(s * u[2], t)
-            T = cfg.motor.thrust_at(t)
+            if not self.simple:
+                self._stage_events(t, s * u, sdot * u, events)
+            T = self.thrust(t)
             qd = 0.5 * atm.density * sdot * sdot
             ca = 0.0
             mach = sdot / atm.speed_of_sound
             if sdot > 0.1:
-                ca = cfg.aero.coefficients(FlightCondition(
+                ca = self.aero.coefficients(FlightCondition(
                     mach=mach, reynolds_per_m=sdot / atm.kinematic_viscosity, thrusting=T > 0)).ca
             acc = (T - qd * self.S * ca) / m - g * u[2]
             if not liftoff and acc <= 0:
@@ -270,7 +394,7 @@ class FlightSimulator:
                 events.append((t, "liftoff"))
             y = np.concatenate([s * u, sdot * u, q0, np.zeros(3)])
             info = dict(acc=acc * u, sf=np.array([acc + g * u[2], 0.0, 0.0]), m=m, cg=cg,
-                        xcp=self.cfg.aero.coefficients(FlightCondition(
+                        xcp=self.aero.coefficients(FlightCondition(
                             mach=max(mach, 0.01), reynolds_per_m=1e6)).xcp,
                         mach=mach, alpha=0.0, thrust=T, qdyn=qd, p=atm.pressure,
                         T=atm.temperature)
@@ -288,11 +412,16 @@ class FlightSimulator:
         phase = "powered"
         while t < cfg.max_time:
             info: dict = {}
+            if not self.simple:
+                self._stage_events(t, y[0:3], y[3:6], events)
             self._deriv(t, y, info)
-            if not burnout_logged and t >= cfg.motor.burn_time:
-                events.append((t, "burnout"))
-                burnout_logged = True
-                phase = "coast"
+            if self.simple:
+                if not burnout_logged and t >= cfg.motor.burn_time:
+                    events.append((t, "burnout"))
+                    burnout_logged = True
+                    phase = "coast"
+            else:
+                phase = "powered" if info["thrust"] > 0 else "coast"
             log(t, y, info, phase)
             yn = self._rk4(t, y, h)
             if y[5] > 0 and yn[5] <= 0:
@@ -308,6 +437,11 @@ class FlightSimulator:
                 break
 
         notes = []
+        if not self.simple:
+            end = self._burn_end()
+            if end is not None and end <= t:
+                events.append((end, "burnout"))
+            notes.append("several motors / stages: " + "; ".join(self.prop.describe()))
         if cfg.dry_mass_scale != 1.0 or cfg.dry_cg_shift != 0.0:
             notes.append("dry mass/CG perturbed from design values")
 
@@ -330,6 +464,8 @@ class FlightSimulator:
                 self._deriv(t, y, info)
                 log(t, y, info, "landed")
 
+        events.sort(key=lambda e: e[0])
+        bodies = [] if self.simple else [self._fly_body(b) for b in self.separated]
         res = SimulationResult(
             t=np.array(rec["t"]), position=np.array(rec["r"]), velocity=np.array(rec["v"]),
             acceleration=np.array(rec["a"]), specific_force_body=np.array(rec["sf"]),
@@ -338,9 +474,34 @@ class FlightSimulator:
             cg=np.array(rec["cg"]), xcp=np.array(rec["xcp"]), thrust=np.array(rec["thrust"]),
             dynamic_pressure=np.array(rec["qdyn"]), pressure=np.array(rec["p"]),
             temperature=np.array(rec["T"]), phase=rec["phase"], events=events, site=cfg.site,
-            reference_diameter=self.d, notes=notes,
-            kind=DataKind.SIMULATED)
+            reference_diameter=cfg.aero.reference_diameter, notes=notes,
+            kind=DataKind.SIMULATED, bodies=bodies)
         return res
+
+    def _fly_body(self, b: dict) -> dict:
+        """A separated stage flown to the ground as a tumbling point mass (drag ESTIMATED)."""
+        r, v, t = b["r"].copy(), b["v"].copy(), b["t"]
+        m = b["mass"]
+        cda = 0.6 * b["length"] * b["diameter"] * max(1, b["count"]) + 0.5 * math.pi * b["diameter"] ** 2 / 4
+        h = 0.02
+        traj = [(t, *r)]
+        apo = r[2]
+        while r[2] > 0 and t < b["t"] + self.cfg.max_time:
+            atm, wind, g = self._env(r[2], t)
+            va = v - wind
+            a = -0.5 * atm.density * float(np.linalg.norm(va)) * va * cda / m + np.array([0.0, 0.0, -g])
+            v = v + a * h
+            r = r + v * h
+            t += h
+            apo = max(apo, r[2])
+            if len(traj) < 4000 and int(round(t / h)) % 10 == 0:
+                traj.append((t, *r))
+        traj.append((t, *r))
+        return {"stage": b["stage"], "parallel": b["parallel"], "separation_time_s": b["t"], "separation_altitude_m": float(b["r"][2]),
+                "separation_speed_mps": float(np.linalg.norm(b["v"])), "mass_kg": m, "apogee_agl_m": float(apo),
+                "landing_time_s": float(t), "landing_east_m": float(r[0]), "landing_north_m": float(r[1]),
+                "impact_speed_mps": float(np.linalg.norm(v)), "trajectory": [list(map(float, p)) for p in traj],
+                "recovery": "tumble (no recovery device modelled)", "kind": "SIMULATED, drag ESTIMATED"}
 
     def _descent(self, t, y, t_apogee, events, log):
         cfg = self.cfg

@@ -41,7 +41,10 @@ def test_import_pods_boosters_tubefins():
     motors = {m.designation: m for m in r.motors}
     assert motors["F50T"].mount == "main" and motors["D12"].mount == "Boosters" and motors["D12"].count == 2
     assert v.motor_slot.motor_diameter == pytest.approx(0.029)
-    assert any("side boosters" in w and "not simulated" in w for w in r.warnings)
+    assert any("side boosters (stage 1)" in w and "motors & staging" in w for w in r.warnings)
+    # stages: the core and its pods are stage 0, the boosters stage 1 with their own motor slot
+    assert c["Pod tube"].stage == 0 and c["Booster tube"].stage == 1 and motors["D12"].stage == 1
+    assert v.motor_slot_for(1) is not None and v.motor_slot_for(1).stage == 1 and v.motor_slot.stage == 0
     assert any("tube fins" in w for w in r.warnings)
 
 

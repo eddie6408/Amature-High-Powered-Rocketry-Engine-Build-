@@ -55,7 +55,8 @@ as you type. Pick the motor for analysis at the top to see loaded and burnout st
   numbers. Freeform and elliptical fins are imported as equal-area trapezoids (flagged
   ESTIMATED). Pods and parallel stages (side boosters) import as external bodies: each copy adds
   its mass, inertia, lift and drag, and the main airframe's length and reference diameter are
-  unchanged. Booster motors are listed, but booster thrust and separation are not simulated yet.
+  unchanged. Parallel stages become their own stage; set their motors and separation in the
+  mission's motors & staging.
   Tube fins import with their true tube mass; their lift is estimated as flat fins of the same
   side-on size, and they are left out of the flat-plate flutter check. OpenRocket materials that
   AERODYNE doesn't know are kept with the design.
@@ -117,6 +118,20 @@ altitude ceiling, recovery-field radius and descent rates.
 * **Wind.** Choose *Measured / forecast profile* to enter wind by altitude, or import a
   forecast or sounding CSV (altitude, speed, direction; ft/m, kt/mph/m/s; AGL or MSL). The
   Monte Carlo then disperses that profile instead of a generic one.
+* **Motors & staging** (clusters, stacked stages, side boosters, airstarts). Leave it empty for
+  one motor. Otherwise list motor groups: motor, count (a cluster), stage (0 = the top stage;
+  1 = the stage below it, or the side boosters) and ignition (at launch; a set time after launch
+  for an airstart; or a delay after the stage below separates). Each stage below the top one
+  separates a set delay after its motors burn out. Tick *side boosters* for parallel stages.
+  The design's components carry their stage (OpenRocket imports set it), and each stage's
+  motors sit in that stage's motor slot.
+  * After each separation the remaining rocket's mass, inertia and aerodynamics are
+    recomputed from its own components.
+  * The dropped stage is flown to the ground as a tumbling body (drag ESTIMATED). Its
+    separation point, apogee, landing point and impact speed are listed with the results.
+  * The flight card and safety checks use the installed total impulse and the thrust of every
+    motor lit at launch. Readiness checks the data quality of every motor, and Monte Carlo
+    disperses all of them.
 * **Simulate** runs the 6-DOF prediction: apogee, speeds, loads, stability over the burn,
   deployment speeds and landing point.
 * **Monte Carlo** disperses mass, CG, impulse, burn time, drag, wind, temperature and rail

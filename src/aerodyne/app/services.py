@@ -222,17 +222,53 @@ def aero_for(design: Design):
 
 
 def mission_hashes(ws: Workspace, m: Mission) -> dict[str, str]:
+    motor_hash = ws.motor(m.motor_key).data_hash
+    if m.motors:                                   # every motor of a cluster / staged flight
+        motor_hash = stable_hash([motor_hash] + [ws.motor(g["motor_key"]).data_hash for g in m.motors])
     return {"design": ws.registry.get(m.vehicle_id).revision(m.revision).config_hash,
-            "motor": ws.motor(m.motor_key).data_hash,
+            "motor": motor_hash,
             "mission": stable_hash(m.to_dict())}
+
+
+def propulsion_for(ws: Workspace, m: Mission):
+    """The mission's motors as a PropulsionSystem (None: its single motor)."""
+    from aerodyne.dynamics.propulsion_system import MotorGroup, PropulsionSystem, StageSeparation
+
+    if not m.motors:
+        return None
+    try:
+        groups = tuple(MotorGroup(ws.motor(g["motor_key"]), int(g.get("count", 1)), int(g.get("stage", 0)),
+                                  str(g.get("ignition", "launch")), float(g.get("delay", 0.0))) for g in m.motors)
+        seps = tuple(StageSeparation(int(x["stage"]), float(x.get("delay", 0.5)), bool(x.get("parallel", False)))
+                     for x in m.separations)
+        return PropulsionSystem(groups, seps)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise BadRequest(f"motors / staging: {exc}") from exc
 
 
 def build_config(ws: Workspace, m: Mission, **kw: Any) -> tuple[SimulationConfig, Design]:
     d = ws.design(m.vehicle_id, m.revision)
-    cfg = SimulationConfig(vehicle=d.vehicle, motor=ws.motor(m.motor_key),
+    prop = propulsion_for(ws, m)
+    motor = prop.groups[0].motor if prop is not None else ws.motor(m.motor_key)
+    cfg = SimulationConfig(vehicle=d.vehicle, motor=motor, propulsion=prop,
                            aero=aero_for(d), atmosphere=m.atmosphere_model(),
                            wind=m.wind_model(), site=m.launch_site(), recovery=d.recovery, **kw)
     return cfg, d
+
+
+def installed(cfg: SimulationConfig) -> dict[str, Any]:
+    """Installed impulse, liftoff average thrust and a label, for one motor or several."""
+    from aerodyne.propulsion.motor import impulse_class
+
+    p = cfg.propulsion
+    if p is None or p.is_simple:
+        mt = cfg.motor if p is None else p.groups[0].motor
+        return {"total_impulse": mt.total_impulse, "liftoff_average_thrust": mt.average_thrust,
+                "class": mt.classification, "label": f"{mt.metadata.manufacturer} {mt.metadata.designation}",
+                "motors": 1, "description": []}
+    return {"total_impulse": p.total_impulse, "liftoff_average_thrust": p.liftoff_average_thrust,
+            "class": f"{impulse_class(p.total_impulse)} (installed)", "motors": p.motor_count,
+            "label": " + ".join(f"{g.count}× {g.motor.metadata.designation}" for g in p.groups), "description": p.describe()}
 
 
 def save_mission(ws: Workspace, data: dict) -> dict:
@@ -264,6 +300,7 @@ def simulate(ws: Workspace, mission_id: str) -> dict:
     cfg, _ = build_config(ws, m)
     res = FlightSimulator(cfg).run()
     data = {"summary": res.summary(), "events": res.events, "notes": res.notes,
+            "stages": [{k: v for k, v in b.items() if k != "trajectory"} for b in res.bodies],
             "series": series(res), "hashes": mission_hashes(ws, m),
             "motor_quality": cfg.motor.metadata.data_quality.value, "data_kind": DataKind.SIMULATED.value}
     run_id = ws.save_run("simulation", m.id, _clean(data))
@@ -338,7 +375,8 @@ def readiness(ws: Workspace, mission_id: str) -> dict:
     nominal = FlightSimulator(cfg).run()
     mc = _latest_matching(ws, m, "montecarlo")
     sil = _latest_matching(ws, m, "sil")
-    rep = review(design, cfg.motor, m.limits, nominal, mc["report"] if mc else None, sil, atmosphere=cfg.atmosphere)
+    rep = review(design, cfg.motor, m.limits, nominal, mc["report"] if mc else None, sil, atmosphere=cfg.atmosphere,
+                 propulsion=cfg.propulsion)
     rep["evidence_runs"] = {"montecarlo": mc["id"] if mc else None, "sil": sil["id"] if sil else None}
     rep["hashes"] = mission_hashes(ws, m)
     run_id = ws.save_run("readiness", m.id, _clean({**rep, "summary": {"status": rep["status"]}}))
@@ -441,6 +479,8 @@ def recovery_drift(ws: Workspace, mission_id: str, data: dict) -> dict:
     except (ValueError, RuntimeError) as exc:
         raise BadRequest(f"no flight: {exc}") from exc
     spent = MassPropertiesEngine(d.vehicle).configuration("MOTOR_SPENT", cfg.motor).mass
+    if cfg.propulsion is not None and not cfg.propulsion.is_simple:
+        spent = float(res.mass[-1])
     wfrom = float(m.wind.get("from_deg", 270.0)) if isinstance(m.wind.get("from_deg"), (int, float)) else 270.0
     out = drift_table(spent, d.recovery, float(res.summary()["apogee_agl_m"]), float(m.site.get("altitude_msl", 0.0)),
                       m.atmosphere_model(), [float(w) for w in data["winds"]] if data.get("winds") else None,
@@ -601,6 +641,12 @@ def flight_card(ws: Workspace, mission_id: str, conditions: dict | None = None) 
     eng = MassPropertiesEngine(v)
     full = eng.configuration("FULL", motor)
     spent = eng.configuration("MOTOR_SPENT", motor)
+    if cfg.propulsion is not None and not cfg.propulsion.is_simple:
+        # several motors / stages: liftoff and landing mass come from the simulation itself
+        from types import SimpleNamespace
+
+        full = SimpleNamespace(mass=float(res.mass[0]), cg=float(res.cg[0]))
+        spent = SimpleNamespace(mass=float(res.mass[-1]), cg=float(res.cg[-1]))
     _, x_cp, _ = barrowman_cp(v, 0.3)
     mc = _latest_matching(ws, m, "montecarlo")
     p95 = ((mc or {}).get("report", {}).get("statistics", {}).get("apogee_agl_m", {}) or {}).get("p95")
@@ -619,8 +665,9 @@ def flight_card(ws: Workspace, mission_id: str, conditions: dict | None = None) 
         gust = float(wind) + 3.0 * float(c["gust_sigma"])
     apogee = p95 if p95 is not None else s["apogee_agl_m"]
     prof = ws.profile()
+    inst = installed(cfg)
     review_ = safety_review(
-        total_impulse_ns=motor.total_impulse, average_thrust_n=motor.average_thrust, liftoff_mass_kg=full.mass,
+        total_impulse_ns=inst["total_impulse"], average_thrust_n=inst["liftoff_average_thrust"], liftoff_mass_kg=full.mass,
         rail_elevation_deg=cfg.site.elevation_deg, flyer_cert_level=prof.get("cert_level"),
         wind_mps=None if wind is None else float(wind), gust_mps=None if gust is None else float(gust),
         cloud_cover_pct=c.get("cloud_cover_pct"), visibility_m=c.get("visibility_m"), apogee_agl_m=apogee,
@@ -637,10 +684,14 @@ def flight_card(ws: Workspace, mission_id: str, conditions: dict | None = None) 
                     "length_m": v.length, "diameter_m": v.reference_diameter, "liftoff_mass_kg": full.mass,
                     "cg_m": full.cg, "cp_m": x_cp, "margin_cal": (x_cp - full.cg) / v.reference_diameter,
                     "mass_kind": eng.dry().kind.value},
-        "motor": {"designation": motor.metadata.designation, "manufacturer": motor.metadata.manufacturer,
-                  "class": motor.classification, "total_impulse_ns": motor.total_impulse,
-                  "average_thrust_n": motor.average_thrust, "burn_time_s": motor.burn_time,
-                  "data_quality": motor.metadata.data_quality.value, "delays": motor.metadata.delays},
+        "motor": {"designation": motor.metadata.designation if inst["motors"] == 1 else inst["label"],
+                  "manufacturer": motor.metadata.manufacturer if inst["motors"] == 1 else "",
+                  "class": inst["class"], "total_impulse_ns": inst["total_impulse"],
+                  "average_thrust_n": inst["liftoff_average_thrust"], "burn_time_s": motor.burn_time,
+                  "data_quality": motor.metadata.data_quality.value, "delays": motor.metadata.delays,
+                  "motors": inst["motors"], "staging": inst["description"]},
+        "stages": res.bodies and [{k: b[k] for k in ("stage", "parallel", "separation_time_s", "apogee_agl_m",
+                                                      "landing_east_m", "landing_north_m", "impact_speed_mps")} for b in res.bodies],
         "prediction": {"apogee_agl_m": s["apogee_agl_m"], "apogee_p95_m": p95, "max_speed_mps": s["max_velocity_mps"],
                        "max_mach": s["max_mach"], "rail_exit_mps": s["rail_exit_velocity_mps"],
                        "time_to_apogee_s": s["time_to_apogee_s"], "landing_distance_m": float(np.hypot(
@@ -1040,7 +1091,7 @@ def launch_simulation(ws: Workspace, mission_id: str, weather: dict, motor_key: 
     return _clean({
         "frames": frames, "phases": phases, "events": res.events, "summary": s, "calm_summary": calm.summary(),
         "profile": profile(d.vehicle), "length_m": d.vehicle.length, "diameter_m": d.vehicle.reference_diameter,
-        "cg_m": float(res.cg[0]), "peak_thrust": float(cfg.motor.peak_thrust),
+        "cg_m": float(res.cg[0]), "peak_thrust": float(max(res.thrust.max(), 1e-6)),
         "recovery": [{"name": dv.name, "diameter": dv.diameter} for dv in (rc.devices if rc else [])],
         "site": {"rail_length": site.rail_length, "elevation_deg": site.elevation_deg, "azimuth_deg": site.azimuth_deg,
                  "altitude_msl": site_alt, "latitude": site.latitude, "longitude": site.longitude},
@@ -1052,7 +1103,10 @@ def launch_simulation(ws: Workspace, mission_id: str, weather: dict, motor_key: 
                     "pressure_hpa": site_atm.pressure / 100, "density": site_atm.density,
                     "density_ratio": site_atm.density / std_site.density,
                     "density_altitude_m": density_altitude(site_atm.density)},
-        "motor": cfg.motor.summary(), "vehicle": f"{m.vehicle_id} {m.revision}", "kind": "SIMULATED",
+        "motor": {**cfg.motor.summary(), **({"designation": installed(cfg)["label"]} if cfg.propulsion is not None else {})},
+        "stages": [{k: b[k] for k in ("stage", "parallel", "separation_time_s", "apogee_agl_m", "landing_east_m",
+                                      "landing_north_m", "impact_speed_mps")} for b in res.bodies],
+        "vehicle": f"{m.vehicle_id} {m.revision}", "kind": "SIMULATED",
     })
 
 

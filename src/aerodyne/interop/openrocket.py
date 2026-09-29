@@ -56,6 +56,7 @@ class MotorRef:
     config_id: str | None
     mount: str = "main"          # "main", or the pod / booster group it sits in
     count: int = 1               # motors of this kind (boosters: one per booster)
+    stage: int = 0               # AERODYNE stage number (0 = top stage)
 
 
 @dataclass
@@ -144,6 +145,7 @@ class _Pod:
     offset: float = 0.0
     booster: bool = False
     comps: list = field(default_factory=list)
+    stage: int = 0
 
 
 class _Builder:
@@ -159,6 +161,8 @@ class _Builder:
         self.auto_rings: list[tuple[PointMass, float, float, float]] = []   # ring, ro, length, density
         self.subtree_overrides: list[ET.Element] = []
         self.pod: _Pod | None = None                         # inside a pod set / parallel stage
+        self.cur_stage = 0                                   # OpenRocket stage being read (0 = top)
+        self.next_stage = 1
 
     # ---- placement -----------------------------------------------------------
     @staticmethod
@@ -175,6 +179,7 @@ class _Builder:
 
     # ---- traversal -------------------------------------------------------------
     def _add(self, comp, el: ET.Element):
+        comp.stage = self.pod.stage if self.pod is not None else self.cur_stage
         if self.pod is not None:
             comp.instances = self.pod.count
             comp.radial_offset = self.pod.offset
@@ -196,11 +201,14 @@ class _Builder:
         self.v.name = (rocket.findtext("name") or "imported").strip()
         x = 0.0
         stages = rocket.findall("./subcomponents/stage")
+        self.next_stage = len(stages)
         if len(stages) > 1:
-            self.warnings.append(f"{len(stages)} stages: imported as one stack; staging not modelled")
-        for st in stages:
+            self.warnings.append(f"{len(stages)} stages imported (stage 0 = top): set each stage's motor and the "
+                                 "separation in the mission's motors & staging")
+        for i, st in enumerate(stages):
             if self._covers_subcomponents(st) and _f(st, "overridemass") is not None:
                 self.subtree_overrides.append(st)
+            self.cur_stage = i
             x = self._children(st, fore=x, length=0.0, radius=math.nan, top_level=True)
         self._resolve_auto()
         # body-tube children need the resolved radius (fins, rings with 'auto' radii)
@@ -212,6 +220,7 @@ class _Builder:
             for tube, el, pod in batch:
                 ro = tube.outer_diameter / 2
                 self.pod = pod
+                self.cur_stage = tube.stage
                 self._children(el, tube.x, tube.length_, ro, airframe_ri=ro - tube.wall_thickness)
                 self.pod = None
         self._resolve_auto()
@@ -441,7 +450,10 @@ class _Builder:
         name = (el.findtext("name") or el.tag).strip()
         n = int(_f(el, "instancecount", _f(el, "podcount", 1)) or 1)
         booster = el.tag != "podset"
-        outer, self.pod = self.pod, _Pod(name, n, booster=booster)
+        stage = self.cur_stage
+        if booster:
+            stage, self.next_stage = self.next_stage, self.next_stage + 1
+        outer, self.pod = self.pod, _Pod(name, n, booster=booster, stage=stage)
         try:
             self._children(el, x0, 0.0, math.nan, top_level=True)
             radii = [getattr(c, "outer_diameter", 0.0) or getattr(c, "diameter", 0.0)
@@ -455,10 +467,10 @@ class _Builder:
             self.pod.offset = (pr + pod_r + val if method == "relative" else pr + pod_r if method == "surface" else val)
             for c in self.pod.comps:
                 c.radial_offset = self.pod.offset
-            kind = "side boosters (parallel stage)" if booster else "pods"
+            kind = f"side boosters (stage {stage})" if booster else "pods"
             self.warnings.append(
                 f"'{name}': {n} {kind} imported at {self.pod.offset * 1000:.0f} mm from the axis (mass, lift and drag of "
-                "each; ESTIMATED)" + ("; booster motors recorded but their thrust and separation are not simulated" if booster else ""))
+                "each; ESTIMATED)" + ("; give their motors and separation in the mission's motors & staging" if booster else ""))
         finally:
             self.pod = outer
 
@@ -529,15 +541,19 @@ class _Builder:
                            designation=(m.findtext("designation") or "").strip(),
                            diameter_m=_f(m, "diameter"), length_m=_f(m, "length"),
                            delay=(m.findtext("delay") or None), config_id=m.get("configid"),
-                           mount=self.pod.name if self.pod else "main", count=self.pod.count if self.pod else 1)
+                           mount=self.pod.name if self.pod else "main", count=self.pod.count if self.pod else 1,
+                           stage=self.pod.stage if self.pod else self.cur_stage)
             self.motors.append(ref)
             mlen = mlen or ref.length_m
-        if self.pod is not None:               # booster / pod motors: recorded, the airframe's slot stays the core's
-            return
         mlen = mlen or length
-        mdia = next((m.diameter_m for m in self.motors if m.diameter_m and m.mount == "main"), None) or mount_d
-        self.v.add(MotorSlot("motor", x=x + length + overhang - mlen, motor_length=mlen,
-                             motor_diameter=mdia))
+        mdia = next((m.diameter_m for m in motors_here(self.motors, self.pod) if m.diameter_m), None) or mount_d
+        slot = MotorSlot("motor" if self.pod is None else f"{self.pod.name} motor", x=x + length + overhang - mlen,
+                         motor_length=mlen, motor_diameter=mdia)
+        if self.pod is None:
+            slot.stage = self.cur_stage
+            self.v.add(slot)
+        else:                                  # booster / pod motor slot: its own stage, not the airframe's slot
+            self._add(slot, mm)
 
     def _resolve_auto(self) -> None:
         # pod parts with 'auto' radii take the pod's own explicit radius
@@ -571,6 +587,10 @@ class _Builder:
                 if dists:
                     best = min(dists)[1]
             setattr(comp, attr, best if attr == "body_radius" else 2 * best)
+
+
+def motors_here(motors: list[MotorRef], pod: _Pod | None) -> list[MotorRef]:
+    return [m for m in motors if m.mount == (pod.name if pod else "main")]
 
 
 def read_ork(path: str | Path) -> OrkImport:

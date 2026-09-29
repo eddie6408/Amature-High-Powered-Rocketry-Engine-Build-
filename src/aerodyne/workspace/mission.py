@@ -51,12 +51,17 @@ class Mission:
         "azimuth_sigma_deg": 2.0})
 
     site_id: str | None = None            # launch-site library entry the site/limits came from
+    # several motors (clusters, stages, airstarts): [{motor_key, count, stage, ignition, delay}];
+    # empty = motor_key alone. separations: [{stage, delay, parallel}]
+    motors: list[dict[str, Any]] = field(default_factory=list)
+    separations: list[dict[str, Any]] = field(default_factory=list)
 
     # ---- serialization ------------------------------------------------------------
     def to_dict(self) -> dict[str, Any]:
         d = dataclasses.asdict(self)
-        if d.get("site_id") is None:          # optional: older missions keep their hash
-            d.pop("site_id", None)
+        for k in ("site_id", "motors", "separations"):    # optional: older missions keep their hash
+            if not d.get(k):
+                d.pop(k, None)
         return d
 
     @classmethod

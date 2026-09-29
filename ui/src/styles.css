@@ -625,3 +625,7 @@ table.logbook input:not([type=checkbox]), table.logbook select { padding: 4px 6p
 tr.muted-row td { opacity: 0.55; }
 .use-cell button { white-space: nowrap; }
 .use-cell select { max-width: 150px; }
+table.motor-groups td { padding: 4px; }
+table.motor-groups input, table.motor-groups select { padding: 4px 6px; font-size: 12.5px; }
+table.motor-groups input[type=number] { width: 80px; }
+.seps .field { gap: 4px; }

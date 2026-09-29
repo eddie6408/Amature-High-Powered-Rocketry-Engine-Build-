@@ -10,7 +10,9 @@ import { go } from "../router";
 import type { Site } from "./SitesPage";
 
 interface SimRun { id: string; created: string; summary: Summary; events: Array<[number, string]>;
-  series: Record<string, number[]>; notes: string[]; motor_quality: string }
+  series: Record<string, number[]>; notes: string[]; motor_quality: string;
+  stages?: Array<{ stage: number; parallel: boolean; separation_time_s: number; separation_altitude_m: number; separation_speed_mps: number;
+    apogee_agl_m: number; landing_east_m: number; landing_north_m: number; impact_speed_mps: number; landing_time_s: number }> }
 interface McRun { id: string; created: string; report: { statistics: Record<string, Record<string, number>>;
   landing_dispersion: null | { mean_east_m: number; mean_north_m: number; semi_major_m: number; semi_minor_m: number;
   major_axis_bearing_deg: number; confidence: number; max_range_m: number } }; landing: Array<[number | null, number | null]>;
@@ -178,6 +180,7 @@ function MissionView({ missionId, onSaved }: { missionId: string; onSaved: () =>
           <SelectField label="Motor" value={m.motor_key} onChange={(v) => set((x) => { x.motor_key = v; })}
                        options={[["", "—"], ...motors.map((q) => [q.key, `${q.manufacturer} ${q.designation} (${q.data_quality.toLowerCase()})`] as [string, string])]} />
         </div>
+        <MotorsAndStaging m={m} motors={motors} set={set} />
         <h3>Launch site</h3>
         <div className="form grid-form">
           <SelectField label="From the site library" value={m.site_id ?? ""}
@@ -250,6 +253,26 @@ function MissionView({ missionId, onSaved }: { missionId: string; onSaved: () =>
             <Stat label="Landing" value={fmt(Math.hypot(Number(s.landing_east_m ?? 0), Number(s.landing_north_m ?? 0)))} unit="m"
                   sub={`${fmt(Number(s.landing_east_m ?? 0))} E, ${fmt(Number(s.landing_north_m ?? 0))} N`} />
           </section>
+          {sim?.stages && sim.stages.length > 0 && (
+            <Card title={<>Separated stages <KindBadge kind="SIMULATED" /></>}>
+              <table>
+                <thead><tr><th>Stage</th><th>Separation</th><th>Its apogee</th><th>Lands</th><th>Impact speed</th></tr></thead>
+                <tbody>
+                  {sim.stages.map((b) => (
+                    <tr key={b.stage}>
+                      <td>{b.parallel ? "side boosters" : "booster"} (stage {b.stage})</td>
+                      <td>T+{fmt(b.separation_time_s, 1)} s at {fmt(b.separation_altitude_m)} m, {fmt(b.separation_speed_mps)} m/s</td>
+                      <td>{fmt(b.apogee_agl_m)} m</td>
+                      <td>{fmt(Math.hypot(b.landing_east_m, b.landing_north_m))} m from the pad, T+{fmt(b.landing_time_s)} s</td>
+                      <td className={b.impact_speed_mps > 10 ? "neg" : ""}>{fmt(b.impact_speed_mps, 1)} m/s</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="note">Separated stages fall as tumbling bodies (drag ESTIMATED); give them their own recovery for a soft landing.</div>
+            </Card>
+          )}
+          {sim?.notes?.some((n) => n.startsWith("several motors")) && <div className="note">{sim.notes.find((n) => n.startsWith("several motors"))}</div>}
           <div className="chart-grid">
             <LineChart title="Altitude" unit="m" data={series("altitude")} markers={markers} />
             <LineChart title="Speed" unit="m/s" digits={1} data={series("speed")} markers={markers} />
@@ -284,5 +307,64 @@ function MissionView({ missionId, onSaved }: { missionId: string; onSaved: () =>
         )}
       </Card>
     </div>
+  );
+}
+
+/** Clusters, stacked stages, side boosters and airstarts. Empty = the mission's single motor. */
+function MotorsAndStaging({ m, motors, set }: { m: Mission; motors: Motor[]; set: (fn: (x: Mission) => void) => void }) {
+  const groups = m.motors ?? [];
+  const stages = [...new Set(groups.map((g) => g.stage))].filter((s) => s > 0).sort();
+  const syncSeps = (x: Mission) => {
+    const want = [...new Set((x.motors ?? []).map((g) => g.stage))].filter((s) => s > 0);
+    const have = x.separations ?? [];
+    x.separations = want.sort().map((st) => have.find((q) => q.stage === st) ?? { stage: st, delay: 0.5, parallel: false });
+  };
+  const opts = motors.map((q) => [q.key, `${q.manufacturer} ${q.designation}`] as [string, string]);
+  return (
+    <>
+      <h3>Motors &amp; staging <span className="muted">(clusters, stages, side boosters, airstarts)</span></h3>
+      {groups.length === 0 ? (
+        <div className="note">One motor: the one chosen above. <button className="link" onClick={() => set((x) => {
+          x.motors = [{ motor_key: x.motor_key, count: 1, stage: 0, ignition: "launch", delay: 0 }]; syncSeps(x); })}>Set up several motors or stages</button></div>
+      ) : (
+        <>
+          <table className="motor-groups">
+            <thead><tr><th>Motor</th><th>Count</th><th>Stage</th><th>Ignition</th><th>Delay (s)</th><th /></tr></thead>
+            <tbody>
+              {groups.map((g, i) => (
+                <tr key={i}>
+                  <td><select value={g.motor_key} aria-label="Motor" onChange={(e) => set((x) => { x.motors![i].motor_key = e.target.value; if (i === 0) x.motor_key = e.target.value; })}>
+                    {opts.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></td>
+                  <td><input type="number" min={1} step={1} value={g.count} aria-label="Count" onChange={(e) => set((x) => { x.motors![i].count = Math.max(1, Number(e.target.value) || 1); })} /></td>
+                  <td><input type="number" min={0} step={1} value={g.stage} aria-label="Stage" onChange={(e) => set((x) => { x.motors![i].stage = Math.max(0, Number(e.target.value) || 0); syncSeps(x); })} /></td>
+                  <td><select value={g.ignition} aria-label="Ignition" onChange={(e) => set((x) => { x.motors![i].ignition = e.target.value as "launch"; })}>
+                    <option value="launch">at launch</option><option value="time">after launch (airstart)</option><option value="separation">after the stage below separates</option></select></td>
+                  <td><input type="number" min={0} step="any" value={g.delay} aria-label="Delay" disabled={g.ignition === "launch"}
+                             onChange={(e) => set((x) => { x.motors![i].delay = Math.max(0, Number(e.target.value) || 0); })} /></td>
+                  <td><button className="link danger" onClick={() => set((x) => { x.motors!.splice(i, 1); if (!x.motors!.length) { x.motors = []; } syncSeps(x); })}>remove</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <button onClick={() => set((x) => { x.motors = [...(x.motors ?? []), { motor_key: x.motor_key, count: 1, stage: 0, ignition: "launch", delay: 0 }]; syncSeps(x); })}>Add motor group</button>
+          {stages.length > 0 && (
+            <div className="form grid-form seps">
+              {(m.separations ?? []).map((sp, i) => (
+                <div key={sp.stage} className="field">
+                  <span>Stage {sp.stage} separates after burnout +</span>
+                  <input type="number" min={0} step="any" value={sp.delay} aria-label={`Separation delay stage ${sp.stage}`}
+                         onChange={(e) => set((x) => { x.separations![i].delay = Math.max(0, Number(e.target.value) || 0); })} />
+                  <label className="check"><input type="checkbox" checked={sp.parallel} onChange={(e) => set((x) => { x.separations![i].parallel = e.target.checked; })} />
+                    side boosters (not stacked)</label>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="note">Stage 0 is the top stage (sustainer, or the core with side boosters); stage 1 is below it or the side
+            boosters. The design's components carry their stage (OpenRocket imports set it). Each stage's motors sit in that
+            stage's motor slot. Separated stages are flown to the ground as tumbling bodies (drag ESTIMATED).</div>
+        </>
+      )}
+    </>
   );
 }
