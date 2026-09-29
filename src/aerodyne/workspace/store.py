@@ -151,6 +151,26 @@ class Workspace:
         except KeyError:
             raise WorkspaceError(f"unknown motor {key}") from None
 
+    # flyer profile (name, organisation, member number, certification level)
+    PROFILE_FIELDS = {"name": str, "organization": str, "member_number": str, "cert_level": int, "cert_org": str}
+
+    def profile(self) -> dict:
+        p = self.root / "profile.json"
+        return json.loads(p.read_text()) if p.is_file() else {}
+
+    def save_profile(self, data: dict) -> dict:
+        out: dict = {}
+        for k, typ in self.PROFILE_FIELDS.items():
+            v = data.get(k)
+            if v in (None, ""):
+                continue
+            out[k] = typ(v)
+        if "cert_level" in out and not 0 <= out["cert_level"] <= 3:
+            raise WorkspaceError("certification level must be 0 to 3")
+        with self.lock:
+            _write_json(self.root / "profile.json", out)
+        return out
+
     def import_eng(self, text: str, quality: DataQuality, source: str, source_date: str) -> list[str]:
         import tempfile
 

@@ -19,6 +19,8 @@ from aerodyne.dynamics.simulator import SimulationResult
 from aerodyne.environment.atmosphere import G0
 from aerodyne.propulsion.motor import MotorPerformance
 from aerodyne.recovery.recovery import descent_rate
+from aerodyne.structures.flutter import flutter_along_trajectory
+from aerodyne.vehicle.components import FinSet
 from aerodyne.vehicle.mass import MassPropertiesEngine
 from aerodyne.workspace.design import Design
 from aerodyne.workspace.mission import Limits
@@ -41,7 +43,7 @@ def _fmt(v, nd=1):
 
 
 def review(design: Design, motor: MotorPerformance, limits: Limits, nominal: SimulationResult,
-           monte_carlo: dict | None = None, sil: dict | None = None) -> dict:
+           monte_carlo: dict | None = None, sil: dict | None = None, atmosphere=None) -> dict:
     checks: list[Check] = []
     add = checks.append
     v = design.vehicle
@@ -95,6 +97,23 @@ def review(design: Design, motor: MotorPerformance, limits: Limits, nominal: Sim
               False, "SIMULATED",
               "" if mach <= limits.max_mach_analytical else
               "import RASAero/CFD aero tables and compare models before trusting the prediction"))
+
+    # fin flutter along the flight
+    if atmosphere is not None:
+        for fs in [c for c in v.components if isinstance(c, FinSet)]:
+            fl = flutter_along_trajectory(fs, nominal, atmosphere)
+            if fl is None:
+                add(Check(f"flutter_{fs.name}", f"Fin flutter ({fs.name})", "NOT RUN", "—",
+                          "flutter speed ≥ 1.5× flight speed", False, "no shear modulus for this material",
+                          "enter the fin laminate's shear modulus on the fin set"))
+                continue
+            r = fl["min_ratio"]
+            add(Check(f"flutter_{fs.name}", f"Fin flutter ({fs.name})",
+                      "PASS" if r >= 1.5 else "WARN" if r >= 1.0 else "FAIL",
+                      f"{r:.2f}× (flutter {fl['flutter_speed_mps']:.0f} m/s vs {fl['speed_mps']:.0f} m/s at "
+                      f"{fl['altitude_agl_m']:.0f} m AGL)", "flutter speed ≥ 1.5× flight speed", r < 1.0,
+                      f"ESTIMATED, NACA TN 4197; G = {fl['shear_modulus_gpa']:.2f} GPa ({fl['shear_modulus_source']})",
+                      "" if r >= 1.5 else "thicker or stiffer fins, smaller span, or a lower-speed flight"))
 
     # altitude and dispersion - prefer Monte Carlo percentiles
     mc_stats = (monte_carlo or {}).get("statistics", {})

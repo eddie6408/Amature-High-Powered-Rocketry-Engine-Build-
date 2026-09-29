@@ -46,7 +46,8 @@ def test_launch_pad_and_errors(tmp_path):
 OPEN_METEO_REPLY = {
     "latitude": 40.02, "longitude": -105.27, "elevation": 1655.0, "timezone": "America/Denver",
     "current": {"time": "2026-09-29T14:15", "temperature_2m": 24.3, "relative_humidity_2m": 31,
-                "surface_pressure": 836.2, "wind_speed_10m": 4.0, "wind_direction_10m": 250, "wind_gusts_10m": 7.6},
+                "surface_pressure": 836.2, "wind_speed_10m": 4.0, "wind_direction_10m": 250, "wind_gusts_10m": 7.6,
+                "cloud_cover": 35, "visibility": 24140.0},
     "hourly": {"time": ["2026-09-29T13:00", "2026-09-29T14:00"],
                "wind_speed_80m": [5.0, 6.5], "wind_direction_80m": [250, 255],
                "wind_speed_120m": [6.0, 7.5], "wind_direction_120m": [255, 260],
@@ -90,6 +91,7 @@ def test_live_weather_parse_fetch_and_offline():
     assert w["wind_profile"]["altitudes"] == [2.0, 10.0, 80.0, 120.0, 180.0]
     assert w["wind_profile"]["speeds"][2:] == [6.5, 7.5, 9.0]          # the 14:00 hour, not 13:00
     assert lw["kind"] == "ESTIMATED" and lw["elevation_m"] == 1655.0
+    assert lw["cloud_cover_pct"] == 35 and lw["visibility_m"] == 24140.0 and "cloud_cover" in seen[0]
 
     def offline(url, timeout):
         raise urllib.error.URLError("no route to host")

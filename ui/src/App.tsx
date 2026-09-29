@@ -24,7 +24,6 @@ const NAV: Array<[string, string, string, string]> = [
 
 interface WsStatus { name: string; root: string; vehicles: number; flown_revisions: number; motors: number; missions: number; flights: number }
 interface About { version: string; commit: string | null; started_at: string }
-interface Ground { active: boolean; simulated?: boolean; source?: string; error?: string }
 
 function savedTheme(): string | null {
   try { return localStorage.getItem("aerodyne-theme"); } catch { return null; }
@@ -46,7 +45,7 @@ export function App() {
   return (
     <div className="shell">
       <nav className="nav" aria-label="Workflow">
-        <div className="brand"><span className="logo"><Logo /></span><span>AERODYNE{ws && <small>{ws.name}</small>}</span></div>
+        <div className="brand"><span className="logo"><Logo /></span><span>AERODYNE</span></div>
         {NAV.map(([id, label, step]) => (
           <a key={id} href={`#/${id}`} className={page === id ? "active" : ""} aria-current={page === id ? "page" : undefined}>
             <Icon name={id} /><span>{label}</span>{step && <span className="step">{step}</span>}
@@ -57,11 +56,10 @@ export function App() {
           <div><span>Code</span><span>{about?.commit ?? "—"}</span></div>
           <div><span>Up since</span><span>{about ? new Date(about.started_at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—"}</span></div>
           <div><span>Workspace</span><span>{ws ? `${ws.vehicles} veh · ${ws.flights} flt` : "—"}</span></div>
-          <button onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>{theme === "dark" ? "Light theme" : "Dark theme"}</button>
         </div>
       </nav>
       <div className="content">
-        <StatusBar title={current[1]} sub={current[3]} ws={ws} />
+        <StatusBar title={current[1]} sub={current[3]} theme={theme} setTheme={setTheme} />
         {page === "home" && <Home ws={ws} />}
         {page === "design" && <DesignPage vehicleId={route[1]} />}
         {page === "motors" && <MotorsPage />}
@@ -75,26 +73,22 @@ export function App() {
   );
 }
 
-function StatusBar({ title, sub, ws }: { title: string; sub: string; ws: WsStatus | null }) {
-  const [ground, setGround] = useState<Ground | null>(null);
-  const [online, setOnline] = useState(true);
+function StatusBar({ title, sub, theme, setTheme }: { title: string; sub: string; theme: string; setTheme: (t: string) => void }) {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
-    const poll = () => api.get<Ground>("/api/ground/status").then((g) => { setGround(g); setOnline(true); }).catch(() => setOnline(false));
-    poll();
-    const a = setInterval(poll, 5000);
-    const b = setInterval(() => setNow(new Date()), 1000);
-    return () => { clearInterval(a); clearInterval(b); };
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
   }, []);
-  const g = !ground?.active ? { cls: "", label: "Ground station idle" }
-    : ground.simulated ? { cls: "warn", label: "Rehearsal running" } : { cls: "live", label: "Telemetry live" };
   return (
     <header className="appbar">
       <div className="title"><strong>{title}</strong><small>{sub}</small></div>
-      <span className={`chip ${online ? "ok" : "bad"}`}><span className="dot" />{online ? "Server online" : "Server offline"}</span>
-      <span className={`chip ${g.cls}`} title={ground?.source}><span className="dot" />{g.label}</span>
-      {ws && <span className="chip ok"><span className="dot" />{ws.name}</span>}
       <span className="clock" aria-label="local time">{now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit", timeZoneName: "short" })}</span>
+      <div className="theme-switch" role="radiogroup" aria-label="Colour theme">
+        <button role="radio" aria-checked={theme === "light"} className={theme === "light" ? "on" : ""} onClick={() => setTheme("light")}
+                title="Light mode"><Icon name="sun" size={16} /><span>Light</span></button>
+        <button role="radio" aria-checked={theme === "dark"} className={theme === "dark" ? "on" : ""} onClick={() => setTheme("dark")}
+                title="Dark mode"><Icon name="moon" size={16} /><span>Dark</span></button>
+      </div>
     </header>
   );
 }

@@ -24,7 +24,8 @@ class LiveWeatherError(RuntimeError):
 
 
 def open_meteo_url(lat: float, lon: float) -> str:
-    current = "temperature_2m,relative_humidity_2m,surface_pressure,wind_speed_10m,wind_direction_10m,wind_gusts_10m"
+    current = ("temperature_2m,relative_humidity_2m,surface_pressure,wind_speed_10m,wind_direction_10m,wind_gusts_10m,"
+               "cloud_cover,visibility")
     hourly = ",".join(f"wind_speed_{h}m,wind_direction_{h}m" for h in PROFILE_HEIGHTS)
     q = {"latitude": f"{lat:.5f}", "longitude": f"{lon:.5f}", "current": current, "hourly": hourly,
          "wind_speed_unit": "ms", "timezone": "auto", "forecast_days": 1}
@@ -78,6 +79,8 @@ def parse_open_meteo(data: dict[str, Any]) -> dict[str, Any]:
         "elevation_m": data.get("elevation"),
         "observed_at": cur.get("time"), "timezone": data.get("timezone"),
         "peak_gust": gust,
+        "cloud_cover_pct": cur.get("cloud_cover"),
+        "visibility_m": cur.get("visibility"),
         "source": "Open-Meteo forecast model (current conditions)",
         "kind": "ESTIMATED",
         "note": "Model analysis for this location and hour, not a measurement at the pad. "

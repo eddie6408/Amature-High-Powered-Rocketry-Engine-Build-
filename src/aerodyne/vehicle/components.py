@@ -20,18 +20,19 @@ class Material:
     density: float           # kg/m^3 (bulk) - for tubes/fins/bulkheads
     tensile_strength: float | None = None   # Pa, for structural margins (nominal)
     youngs_modulus: float | None = None     # Pa
+    shear_modulus: float | None = None      # Pa, in-plane (fin flutter); typical handbook value
 
 
 MATERIALS: dict[str, Material] = {m.name: m for m in [
-    Material("fiberglass", 1850.0, 2.4e8, 1.7e10),
-    Material("carbon_fiber", 1600.0, 6.0e8, 7.0e10),
+    Material("fiberglass", 1850.0, 2.4e8, 1.7e10, 2.9e9),
+    Material("carbon_fiber", 1600.0, 6.0e8, 7.0e10, 5.0e9),
     Material("blue_tube", 1300.0, None, None),
     Material("cardboard", 680.0, None, None),
-    Material("aluminum_6061", 2700.0, 2.76e8, 6.9e10),
-    Material("birch_plywood", 630.0, 4.0e7, 1.1e10),
-    Material("pla", 1240.0, 5.0e7, 3.5e9),
-    Material("abs", 1050.0, 4.0e7, 2.3e9),
-    Material("g10", 1800.0, 2.6e8, 1.8e10),
+    Material("aluminum_6061", 2700.0, 2.76e8, 6.9e10, 2.6e10),
+    Material("birch_plywood", 630.0, 4.0e7, 1.1e10, 6.2e8),
+    Material("pla", 1240.0, 5.0e7, 3.5e9, 1.3e9),
+    Material("abs", 1050.0, 4.0e7, 2.3e9, 8.5e8),
+    Material("g10", 1800.0, 2.6e8, 1.8e10, 2.9e9),
 ]}
 
 
@@ -180,6 +181,7 @@ class FinSet(Component):
     material: str | Material = "g10"
     cant_deg: float = 0.0
     cross_section: str = "rounded"   # square | rounded | airfoil (edge shape, drives pressure drag)
+    shear_modulus_gpa: float | None = None   # measured/declared in-plane shear modulus (fin flutter)
 
     @property
     def length(self) -> float:

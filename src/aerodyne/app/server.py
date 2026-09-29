@@ -75,6 +75,9 @@ class App:
         r("POST", r"/api/tiles/terrain/prefetch", lambda q, b: {"job": self.jobs.start(
             "terrain", lambda p: {"summary": tiles.prefetch(float(b["lat"]), float(b["lon"]), float(b.get("radius_km", 5)),
                                                             int(b.get("max_zoom", 14)), p)})})
+        r("GET", r"/api/profile", lambda q, b: ws_.profile())
+        r("PUT", r"/api/profile", lambda q, b: ws_.save_profile(b))
+        r("POST", r"/api/missions/(?P<mid>[^/]+)/flight-card", lambda q, b, mid: svc.flight_card(ws_, mid, b.get("conditions")))
         r("GET", r"/api/weather/live", lambda q, b: svc.live_weather(float(q["lat"]), float(q["lon"])))
         r("POST", r"/api/missions/(?P<mid>[^/]+)/readiness", lambda q, b, mid: svc.readiness(ws_, mid))
         r("GET", r"/api/runs", lambda q, b: ws_.list_runs(q.get("mission"), q.get("kind")))

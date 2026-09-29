@@ -310,11 +310,82 @@ def readiness(ws: Workspace, mission_id: str) -> dict:
     nominal = FlightSimulator(cfg).run()
     mc = _latest_matching(ws, m, "montecarlo")
     sil = _latest_matching(ws, m, "sil")
-    rep = review(design, cfg.motor, m.limits, nominal, mc["report"] if mc else None, sil)
+    rep = review(design, cfg.motor, m.limits, nominal, mc["report"] if mc else None, sil, atmosphere=cfg.atmosphere)
     rep["evidence_runs"] = {"montecarlo": mc["id"] if mc else None, "sil": sil["id"] if sil else None}
     rep["hashes"] = mission_hashes(ws, m)
     run_id = ws.save_run("readiness", m.id, _clean({**rep, "summary": {"status": rep["status"]}}))
     return ws.run(run_id)
+
+
+# ---------------------------------------------------------------------------- launch day
+def flight_card(ws: Workspace, mission_id: str, conditions: dict | None = None) -> dict:
+    """Everything for the RSO flight card plus the safety-code review for this mission.
+
+    conditions (optional, e.g. from live weather): wind_speed, gust_speed or gust_sigma,
+    cloud_cover_pct, visibility_m, complex_rocket."""
+    from aerodyne.recovery.recovery import descent_rate
+    from aerodyne.safety import safety_review
+    from aerodyne.structures.flutter import flutter_along_trajectory
+    from aerodyne.vehicle.components import FinSet
+
+    c = conditions or {}
+    m = ws.mission(mission_id)
+    cfg, d = build_config(ws, m)
+    try:
+        res = FlightSimulator(cfg).run()
+    except (ValueError, RuntimeError) as exc:
+        raise BadRequest(f"no flight: {exc}") from exc
+    s = res.summary()
+    v, motor = d.vehicle, cfg.motor
+    eng = MassPropertiesEngine(v)
+    full = eng.configuration("FULL", motor)
+    spent = eng.configuration("MOTOR_SPENT", motor)
+    _, x_cp, _ = barrowman_cp(v, 0.3)
+    mc = _latest_matching(ws, m, "montecarlo")
+    p95 = ((mc or {}).get("report", {}).get("statistics", {}).get("apogee_agl_m", {}) or {}).get("p95")
+    recovery = []
+    landing_rate = None
+    if d.recovery:
+        for dev in d.recovery.devices:
+            recovery.append({"name": dev.name, "diameter_m": dev.diameter, "cd": dev.cd,
+                             "deploy": "apogee" if dev.deploy_event == "apogee" else f"{dev.deploy_altitude_agl:.0f} m AGL"})
+        landing_rate = descent_rate(spent.mass, d.recovery.body_cd_area + sum(x.cd_area for x in d.recovery.devices), 1.2)
+    flutter = [dict(fl, fin=f.name) for f in v.components if isinstance(f, FinSet)
+               for fl in [flutter_along_trajectory(f, res, cfg.atmosphere)] if fl]
+    wind = c.get("wind_speed")
+    gust = c.get("gust_speed")
+    if gust is None and c.get("gust_sigma") is not None and wind is not None:
+        gust = float(wind) + 3.0 * float(c["gust_sigma"])
+    apogee = p95 if p95 is not None else s["apogee_agl_m"]
+    prof = ws.profile()
+    review_ = safety_review(
+        total_impulse_ns=motor.total_impulse, average_thrust_n=motor.average_thrust, liftoff_mass_kg=full.mass,
+        rail_elevation_deg=cfg.site.elevation_deg, flyer_cert_level=prof.get("cert_level"),
+        wind_mps=None if wind is None else float(wind), gust_mps=None if gust is None else float(gust),
+        cloud_cover_pct=c.get("cloud_cover_pct"), visibility_m=c.get("visibility_m"), apogee_agl_m=apogee,
+        ceiling_agl_m=m.limits.altitude_ceiling_agl_m,
+        landing_energy_j=None if landing_rate is None else 0.5 * spent.mass * landing_rate ** 2,
+        complex_rocket=bool(c.get("complex_rocket")),
+        flutter_ratio=min((f["min_ratio"] for f in flutter), default=None))
+    return _clean({
+        "mission": {"id": m.id, "name": m.name, "site": m.site},
+        "flyer": prof,
+        "vehicle": {"id": m.vehicle_id, "revision": m.revision, "name": ws.registry.get(m.vehicle_id).name,
+                    "length_m": v.length, "diameter_m": v.reference_diameter, "liftoff_mass_kg": full.mass,
+                    "cg_m": full.cg, "cp_m": x_cp, "margin_cal": (x_cp - full.cg) / v.reference_diameter,
+                    "mass_kind": eng.dry().kind.value},
+        "motor": {"designation": motor.metadata.designation, "manufacturer": motor.metadata.manufacturer,
+                  "class": motor.classification, "total_impulse_ns": motor.total_impulse,
+                  "average_thrust_n": motor.average_thrust, "burn_time_s": motor.burn_time,
+                  "data_quality": motor.metadata.data_quality.value, "delays": motor.metadata.delays},
+        "prediction": {"apogee_agl_m": s["apogee_agl_m"], "apogee_p95_m": p95, "max_speed_mps": s["max_velocity_mps"],
+                       "max_mach": s["max_mach"], "rail_exit_mps": s["rail_exit_velocity_mps"],
+                       "time_to_apogee_s": s["time_to_apogee_s"], "landing_distance_m": float(np.hypot(
+                           s["landing_east_m"] or 0, s["landing_north_m"] or 0)), "landing_rate_mps": landing_rate,
+                       "kind": "SIMULATED"},
+        "recovery": recovery, "flutter": flutter, "safety": review_,
+        "conditions": c,
+    })
 
 
 # ------------------------------------------------------------------------------ flights

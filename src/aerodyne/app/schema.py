@@ -47,7 +47,9 @@ COMPONENTS = {
         {"name": "thickness", "label": "Thickness", "type": _N, "unit": "m"},
         {"name": "body_radius", "label": "Body radius at fins", "type": _N, "unit": "m"},
         {"name": "cross_section", "label": "Edge shape", "type": "select", "options": ["rounded", "square", "airfoil"]},
-        MATERIAL_FIELD]},
+        MATERIAL_FIELD,
+        {"name": "shear_modulus_gpa", "label": "Shear modulus for flutter (blank = typical for material)", "type": _N,
+         "unit": "GPa", "optional": True}]},
     "Bulkhead": {"label": "Bulkhead", "fields": [
         {"name": "diameter", "label": "Diameter", "type": _N, "unit": "m"},
         {"name": "thickness", "label": "Thickness", "type": _N, "unit": "m"},
