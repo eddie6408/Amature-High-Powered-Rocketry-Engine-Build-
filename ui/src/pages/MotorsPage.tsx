@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { api, type Motor } from "../api";
+import { go } from "../router";
 import { LineChart } from "../components/LineChart";
 import { fmt } from "../components/scale";
 import { Card, ErrorBox, KindBadge, NumberField, SelectField, TextField } from "../components/ui";
@@ -134,6 +135,7 @@ export function MotorsPage() {
             <>
               <LineChart title={`${curve.designation} thrust`} unit="N" digits={1}
                          data={curve.time.map((t, i) => ({ t, v: curve.thrust[i] }))} />
+              <button onClick={() => go("launch", "", curve.key)}>Fly this motor in the launch simulator</button>
               <div className="note">Source: {curve.source} ({curve.source_date}) · <KindBadge kind={curve.data_quality} /> · total mass {fmt(curve.total_mass_kg, 3)} kg
                 {curve.notes && <> · {curve.notes}</>}</div>
             </>

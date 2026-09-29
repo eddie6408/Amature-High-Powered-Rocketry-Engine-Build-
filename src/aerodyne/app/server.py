@@ -64,6 +64,10 @@ class App:
             "montecarlo", lambda p: svc.monte_carlo(ws_, mid, int(b.get("n", 100)), p))})
         r("POST", r"/api/missions/(?P<mid>[^/]+)/sil", lambda q, b, mid: {"job": self.jobs.start(
             "sil", lambda p: svc.sil_suite(ws_, mid, b.get("backend", "python"), p))})
+        r("GET", r"/api/missions/(?P<mid>[^/]+)/pad", lambda q, b, mid: svc.launch_pad(ws_, mid))
+        r("POST", r"/api/missions/(?P<mid>[^/]+)/launch", lambda q, b, mid: svc.launch_simulation(
+            ws_, mid, b.get("weather", {}), b.get("motor_key"), int(b.get("seed", 1)), location=b.get("location")))
+        r("GET", r"/api/weather/live", lambda q, b: svc.live_weather(float(q["lat"]), float(q["lon"])))
         r("POST", r"/api/missions/(?P<mid>[^/]+)/readiness", lambda q, b, mid: svc.readiness(ws_, mid))
         r("GET", r"/api/runs", lambda q, b: ws_.list_runs(q.get("mission"), q.get("kind")))
         r("GET", r"/api/runs/(?P<rid>[^/]+)", lambda q, b, rid: ws_.run(rid))

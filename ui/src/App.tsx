@@ -4,6 +4,7 @@ import { api } from "./api";
 import { DesignPage } from "./pages/DesignPage";
 import { FlightsPage } from "./pages/FlightsPage";
 import { GroundPage } from "./pages/GroundPage";
+import { LaunchPage } from "./pages/LaunchPage";
 import { MissionsPage } from "./pages/MissionsPage";
 import { MotorsPage } from "./pages/MotorsPage";
 import { ReadinessPage } from "./pages/ReadinessPage";
@@ -14,6 +15,7 @@ const NAV: Array<[string, string, string]> = [
   ["design", "1 · Design", "vehicle, masses, stability"],
   ["motors", "2 · Motors", "certified thrust data"],
   ["missions", "3 · Simulate", "missions, Monte Carlo"],
+  ["launch", "   Launch simulator", "animated flight, weather"],
   ["readiness", "4 · Test & readiness", "SIL suite, go/no-go"],
   ["ground", "5 · Fly", "ground station"],
   ["flights", "6 · Analyse", "flights vs prediction"],
@@ -45,6 +47,7 @@ export function App() {
         {page === "design" && <DesignPage vehicleId={route[1]} />}
         {page === "motors" && <MotorsPage />}
         {page === "missions" && <MissionsPage missionId={route[1]} />}
+        {page === "launch" && <LaunchPage missionId={route[1]} motorKey={route[2]} />}
         {page === "readiness" && <ReadinessPage missionId={route[1]} />}
         {page === "ground" && <GroundPage />}
         {page === "flights" && <FlightsPage flightId={route[1]} />}

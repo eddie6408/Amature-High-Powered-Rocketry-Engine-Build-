@@ -88,9 +88,10 @@ class Mission:
         if self.wind.get("model") == "layered":
             w = self.wind
 
-            def factory(scale: float, offset: float) -> LayeredWind:
+            def layered(scale: float, offset: float) -> LayeredWind:
                 return LayeredWind(w["altitudes"], [v * scale for v in w["speeds"]],
                                    [d + offset for d in w["from_deg"]])
+            factory = layered
         return UncertaintyModel(
             wind_factory=factory,
             wind_scale=Normal(1.0, u.get("wind_speed_rel_sigma", 0.25)),

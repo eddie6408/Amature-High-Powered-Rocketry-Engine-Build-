@@ -85,6 +85,47 @@ altitude ceiling, recovery-field radius and descent rates.
 * Above about Mach 0.8, import RASAero/CFD aero tables (Python API); the analytical model is
   weakest there.
 
+### Launch simulator (animated flight with weather)
+
+**Launch simulator** (or *Fly this motor in the launch simulator* on the Motors page) draws your
+designed rocket on the pad rail and flies it from ignition to touchdown.
+
+1. **Set the launch location.**
+   * **My location** asks the device's location services for your position (GPS on a phone or
+     tablet). It then loads the current weather there: temperature, humidity, station pressure,
+     wind and gusts at 10 m, and wind aloft at 80, 120 and 180 m. The pad altitude comes from the
+     GPS when it's accurate, otherwise from terrain height.
+   * **Manual entry** always works, including with no signal or internet. Type latitude and
+     longitude (decimal `40.1234, -105.2`, or `40°7'24"N`, or `40 7.404 N`) and the pad altitude.
+     Then either press **Live weather here** or enter the weather by hand.
+   * Browsers share location only with pages on `https://` or on the same computer
+     (`localhost`). A tablet opening the laptop's app over the field network must enter
+     coordinates by hand.
+   * Live weather comes from the Open-Meteo forecast model, so it's labelled **ESTIMATED**
+     (model analysis for that place and hour, not a measurement). Editing any weather value by
+     hand overrides it. Unedited live weather is fetched again at START COUNTDOWN if it is more
+     than 10 minutes old. Check it against a pad anemometer and thermometer.
+   * The results give the pad and predicted landing coordinates, with an "open in maps" link
+     for recovery.
+2. Pick the mission and motor. Set the weather: wind speed and direction, gusts, temperature,
+   humidity and station pressure, plus rail angle and pointing ("into the wind" is the default).
+   Presets cover a standard calm day, a light breeze, a hot humid afternoon and a cold windy morning.
+   The panel shows the resulting air density and density altitude.
+3. Tick the pad checklist, **ARM** (it needs a valid location too), set the countdown length and
+   **START COUNTDOWN**. **HOLD**, **RESUME** and **ABORT** work as at a real pad.
+4. At T-0 the flight plays: flame and smoke while the motor burns, weathercocking in the wind,
+   event call-outs (rail exit, burnout, apogee, deployments), parachutes and drift. Playback
+   runs at 1–25×, and you can scrub or jump to any event. Live tiles show altitude, speeds,
+   Mach, acceleration, downrange and the wind at the rocket's height, with a top-view track.
+5. **Simulated results** compare this weather against a standard calm day with a vertical rail.
+   The difference is the weather's effect on apogee, speeds, time to apogee, flight time and
+   landing distance.
+
+Weather changes the flight physically: temperature, pressure and humidity set the air density,
+which affects drag and Mach number. Wind follows a power-law profile with height, plus random
+gusts. Everything here is **SIMULATED**, and the checklist is a rehearsal aid, not a substitute
+for your RSO's.
+
 ## 4. Test & readiness (before you build)
 
 * **Fault suite:** your flight software (the C firmware application by default) flies

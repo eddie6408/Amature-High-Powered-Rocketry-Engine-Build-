@@ -564,6 +564,148 @@ def static_test(ws: Workspace, data: dict) -> dict:
     return _clean(out)
 
 
+def density_altitude(density: float) -> float:
+    """Altitude in the standard atmosphere that has this air density."""
+    from aerodyne.environment.atmosphere import StandardAtmosphere
+
+    std = StandardAtmosphere()
+    lo, hi = -2000.0, 20000.0
+    for _ in range(50):
+        mid = 0.5 * (lo + hi)
+        if std.at(mid).density > density:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
+
+
+def live_weather(lat: float, lon: float, fetch=None) -> dict:
+    """Current conditions at a launch location (ESTIMATED: forecast-model analysis)."""
+    from aerodyne.environment.live_weather import LiveWeatherError, fetch_live_weather
+
+    try:
+        return _clean(fetch_live_weather(lat, lon) if fetch is None else fetch(lat, lon))
+    except LiveWeatherError as exc:
+        raise BadRequest(str(exc)) from exc
+
+
+def launch_pad(ws: Workspace, mission_id: str) -> dict:
+    """Vehicle geometry and rail for drawing the rocket on the pad before a launch."""
+    m = ws.mission(mission_id)
+    _, d = build_config(ws, m)
+    v = d.vehicle
+    return _clean({"profile": profile(v), "length_m": v.length, "diameter_m": v.reference_diameter,
+                   "site": {"rail_length": float(m.site.get("rail_length", 2.0)),
+                            "latitude": float(m.site.get("latitude", 0.0)),
+                            "longitude": float(m.site.get("longitude", 0.0)),
+                            "altitude_msl": float(m.site.get("altitude_msl", 0.0))},
+                   "vehicle": f"{m.vehicle_id} {m.revision}"})
+
+
+def launch_simulation(ws: Workspace, mission_id: str, weather: dict, motor_key: str | None = None,
+                      seed: int = 1, frame_dt: float = 0.05, location: dict | None = None) -> dict:
+    """Weather-driven flight for the animated launch simulator.
+
+    weather: wind_speed (m/s, 10 m reference), wind_from_deg, gust_sigma (m/s), temperature_c,
+    humidity_pct, pressure_hpa (station pressure; omit for standard), rail_elevation_deg,
+    rail_azimuth_deg or launch_into_wind, and optionally wind_profile {altitudes (m AGL), speeds,
+    from_deg} (e.g. live weather aloft). location: latitude, longitude, altitude_msl of the pad
+    (overrides the mission site). Returns uniform-time frames plus the same vehicle on a standard
+    calm day for comparison."""
+    from dataclasses import replace
+
+    from aerodyne.dynamics.simulator import LaunchSite
+    from aerodyne.environment.atmosphere import StandardAtmosphere
+    from aerodyne.environment.live_weather import check_coordinates
+    from aerodyne.environment.wind import ConstantWind, GustWind, LayeredWind, PowerLawWind
+
+    m = ws.mission(mission_id)
+    if motor_key:
+        ws.motor(motor_key)
+        m.motor_key = motor_key
+    site_over: dict[str, float] = {}
+    for k in ("latitude", "longitude", "altitude_msl"):
+        if location and location.get(k) is not None:
+            site_over[k] = float(location[k])
+    if "latitude" in site_over or "longitude" in site_over:
+        check_coordinates(site_over.get("latitude", 0.0), site_over.get("longitude", 0.0))
+    if not -500.0 <= site_over.get("altitude_msl", 0.0) <= 9000.0:
+        raise BadRequest("site altitude must be between -500 and 9000 m above sea level")
+    m.site = {**m.site, **site_over}
+    site_alt = float(m.site.get("altitude_msl", 0.0))
+    std_site = StandardAtmosphere().at(site_alt)
+    t_c = weather.get("temperature_c")
+    t_off = (float(t_c) + 273.15 - std_site.temperature) if t_c is not None else m.atmosphere.get("temperature_offset", 0.0)
+    rh = max(0.0, min(1.0, float(weather.get("humidity_pct", 0.0)) / 100.0))
+    p_st = weather.get("pressure_hpa")
+    slp = 101325.0 * (float(p_st) * 100.0 / std_site.pressure) if p_st else m.atmosphere.get("sea_level_pressure", 101325.0)
+    atm = StandardAtmosphere(t_off, slp, rh)
+    speed = max(0.0, float(weather.get("wind_speed", 0.0)))
+    wfrom = float(weather.get("wind_from_deg", 270.0)) % 360
+    prof = weather.get("wind_profile")
+    if prof:
+        try:
+            base_wind = LayeredWind([float(a) for a in prof["altitudes"]], [max(0.0, float(v)) for v in prof["speeds"]],
+                                    [float(d) for d in prof["from_deg"]])
+        except (KeyError, TypeError, ValueError, IndexError) as exc:
+            raise BadRequest(f"bad wind profile: {exc}") from exc
+        if not len(prof["altitudes"]) == len(prof["speeds"]) == len(prof["from_deg"]) >= 2:
+            raise BadRequest("wind profile needs matching altitudes, speeds and directions (2 or more)")
+    else:
+        base_wind = PowerLawWind(speed, wfrom)
+    gust = max(0.0, float(weather.get("gust_sigma", 0.0)))
+    wind = GustWind(base_wind, gust, seed=seed) if gust > 0 else base_wind
+    elev = float(weather.get("rail_elevation_deg", m.site.get("elevation_deg", 87.0)))
+    az = wfrom if weather.get("launch_into_wind", True) else float(weather.get("rail_azimuth_deg", m.site.get("azimuth_deg", 0.0)))
+    site = LaunchSite(**{**m.site, "elevation_deg": min(90.0, max(45.0, elev)), "azimuth_deg": az % 360})
+    cfg, d = build_config(ws, m)
+    cfg = replace(cfg, atmosphere=atm, wind=wind, site=site)
+    try:
+        res = FlightSimulator(cfg).run()
+    except (ValueError, RuntimeError) as exc:           # e.g. thrust below weight: no liftoff
+        raise BadRequest(f"no flight: {exc}") from exc
+    calm = FlightSimulator(replace(cfg, atmosphere=StandardAtmosphere(), wind=ConstantWind(),
+                                   site=replace(site, elevation_deg=90.0))).run()
+
+    # uniform frames for smooth playback
+    t = np.arange(0.0, float(res.t[-1]) + 1e-9, frame_dt)
+    lerp = lambda arr: np.interp(t, res.t, arr)
+    q = res.attitude
+    ax = np.column_stack([1 - 2 * (q[:, 2] ** 2 + q[:, 3] ** 2), 2 * (q[:, 1] * q[:, 2] + q[:, 0] * q[:, 3]),
+                          2 * (q[:, 1] * q[:, 3] - q[:, 0] * q[:, 2])])      # body x axis in ENU
+    phases = sorted(set(res.phase), key=res.phase.index)
+    ph_idx = np.array([phases.index(p) for p in res.phase])
+    idx = np.clip(np.searchsorted(res.t, t), 0, len(res.t) - 1)
+    wind_at = np.array([base_wind.at(z, 0.0) for z in lerp(res.position[:, 2])])
+    s = res.summary()
+    site_atm = atm.at(site_alt)
+    rc = d.recovery
+    frames = {
+        "t": t, "east": lerp(res.position[:, 0]), "north": lerp(res.position[:, 1]), "up": lerp(res.position[:, 2]),
+        "vz": lerp(res.velocity[:, 2]), "speed": lerp(np.linalg.norm(res.velocity, axis=1)),
+        "accel_g": lerp(res.specific_force_body[:, 0]) / 9.80665, "mach": lerp(res.mach),
+        "thrust": lerp(res.thrust), "ax_e": lerp(ax[:, 0]), "ax_n": lerp(ax[:, 1]), "ax_u": lerp(ax[:, 2]),
+        "phase": ph_idx[idx], "wind_e": wind_at[:, 0], "wind_n": wind_at[:, 1],
+    }
+    return _clean({
+        "frames": frames, "phases": phases, "events": res.events, "summary": s, "calm_summary": calm.summary(),
+        "profile": profile(d.vehicle), "length_m": d.vehicle.length, "diameter_m": d.vehicle.reference_diameter,
+        "cg_m": float(res.cg[0]), "peak_thrust": float(cfg.motor.peak_thrust),
+        "recovery": [{"name": dv.name, "diameter": dv.diameter} for dv in (rc.devices if rc else [])],
+        "site": {"rail_length": site.rail_length, "elevation_deg": site.elevation_deg, "azimuth_deg": site.azimuth_deg,
+                 "altitude_msl": site_alt, "latitude": site.latitude, "longitude": site.longitude},
+        "landing": dict(zip(("latitude", "longitude"), site.to_geodetic(
+            float(res.position[-1, 0]), float(res.position[-1, 1])))),
+        "weather": {"wind_speed": speed, "wind_from_deg": wfrom, "gust_sigma": gust,
+                    "wind_profile": bool(prof),
+                    "temperature_c": site_atm.temperature - 273.15, "humidity_pct": 100 * rh,
+                    "pressure_hpa": site_atm.pressure / 100, "density": site_atm.density,
+                    "density_ratio": site_atm.density / std_site.density,
+                    "density_altitude_m": density_altitude(site_atm.density)},
+        "motor": cfg.motor.summary(), "vehicle": f"{m.vehicle_id} {m.revision}", "kind": "SIMULATED",
+    })
+
+
 # ----------------------------------------------------------------------------------- jobs
 class JobManager:
     """Runs long operations (Monte Carlo, SIL suite) in background threads."""

@@ -36,7 +36,7 @@ The app walks one rocket from idea to flight and back:
 |---|---|
 | **1 · Design** | Build the vehicle from components or import OpenRocket. Live side profile, mass, CG/CP and stability. Enter measured masses as you build. Revisions lock once flown. |
 | **2 · Motors** | Import certified/manufacturer thrust curves (`.eng`) with declared source and quality. |
-| **3 · Simulate** | A mission = revision + motor + site + wind + limits. 6-DOF prediction and Monte Carlo dispersion (apogee percentiles, landing ellipse). |
+| **3 · Simulate** | A mission = revision + motor + site + wind + limits. 6-DOF prediction and Monte Carlo dispersion (apogee percentiles, landing ellipse). The **launch simulator** puts your rocket on the rail, runs a pad checklist and countdown, and animates the flight to touchdown under the wind, temperature, humidity and pressure you set, then compares the results with a calm standard day. **My location** uses the device's location services and loads live weather (including wind aloft) for that spot; manual coordinates work offline. |
 | **4 · Test & readiness** | Fly the real C flight software through 14 fault scenarios, then get a GO / NO-GO review with evidence for every check. |
 | **5 · Fly** | Ground station: serial/UDP radio (or a rehearsal), pad status, live telemetry, ground track, honest landing estimate. The recording is filed with the flight as write-once raw data. |
 | **6 · Analyse** | Import altimeter/flight-computer logs (any CSV, units confirmed by you) or the telemetry capture. Reconstruct, compare with the prediction, see possible contributors, then revise the design. |
