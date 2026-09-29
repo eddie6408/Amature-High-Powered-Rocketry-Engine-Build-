@@ -22,14 +22,17 @@ def test_cert_levels_and_distances():
 def test_safety_review_pass_fail_and_unset():
     base = dict(total_impulse_ns=2000, average_thrust_n=400, liftoff_mass_kg=5.0, rail_elevation_deg=85)
     ok = safety_review(**base, flyer_cert_level=2, wind_mps=4, cloud_cover_pct=20, visibility_m=16000,
-                       apogee_agl_m=1500, ceiling_agl_m=3000, landing_energy_j=60, flutter_ratio=2.0)
+                       apogee_agl_m=1500, ceiling_agl_m=3000, landing_energy_j=60, flutter_ratio=2.0,
+                       margin_cal=1.6, motor_data_quality="CERTIFIED")
     assert ok["status"] == "GO" and all(i["status"] in ("PASS", "INFO") for i in ok["items"])
     bad = safety_review(**{**base, "liftoff_mass_kg": 20.0, "rail_elevation_deg": 65}, flyer_cert_level=1,
                         wind_mps=6, gust_mps=11, cloud_cover_pct=80, visibility_m=3000,
-                        apogee_agl_m=3500, ceiling_agl_m=3000, flutter_ratio=0.9)
+                        apogee_agl_m=3500, ceiling_agl_m=3000, flutter_ratio=0.9, margin_cal=0.7,
+                        motor_data_quality="HYPOTHETICAL")
     failed = {i["id"] for i in bad["items"] if i["status"] == "FAIL"}
     assert bad["status"] == "NO-GO"
-    assert failed == {"cert", "liftoff_weight", "launch_angle", "wind", "clouds", "visibility", "ceiling", "flutter"}
+    assert failed == {"cert", "liftoff_weight", "launch_angle", "wind", "clouds", "visibility", "ceiling", "flutter",
+                      "stability", "motor"}
     unset = safety_review(**base)
     assert unset["status"] == "CHECK" and {"cert", "wind", "clouds", "visibility"} <= {
         i["id"] for i in unset["items"] if i["status"] == "NOT SET"}
@@ -59,5 +62,7 @@ def test_flight_card_and_profile(tmp_path):
     items = {i["id"]: i for i in card["safety"]["items"]}
     assert items["cert"]["status"] == "PASS" and items["wind"]["status"] == "PASS"
     assert items["ceiling"]["status"] == "NOT SET"                   # example mission has no waiver ceiling
+    assert items["motor"]["status"] == "FAIL"                        # the example flies a synthetic motor
+    assert card["safety"]["status"] == "NO-GO" and "stability" in items
     code, rd = app.dispatch("POST", "/api/missions/example/readiness", {}, {})
     assert any(c["id"].startswith("flutter_") and c["status"] in ("PASS", "WARN", "FAIL") for c in rd["checks"])

@@ -88,6 +88,74 @@ function StaticTest({ onSaved }: { onSaved: (key: string) => void }) {
   );
 }
 
+interface TcMotor { motorId: string; manufacturer: string; manufacturerAbbrev: string; designation: string; commonName: string;
+  impulseClass: string; diameter: number; length: number; type: string; certOrg: string; avgThrustN: number; totImpulseNs: number;
+  burnTimeS: number; availability: string; dataFiles: number; delays: string }
+const CLASSES = ["", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O"];
+const DIAMETERS = ["", "18", "24", "29", "38", "54", "75", "98"];
+
+/** Search ThrustCurve.org and import a motor's certified (or manufacturer) curve with its provenance. */
+function ThrustCurveSearch({ onImported }: { onImported: (key: string) => void }) {
+  const [name, setName] = useState("");
+  const [cls, setCls] = useState("");
+  const [dia, setDia] = useState("");
+  const [mfr, setMfr] = useState("");
+  const [avail, setAvail] = useState("available");
+  const [rows, setRows] = useState<TcMotor[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  const search = async () => {
+    setErr(null); setDone(null); setBusy("search");
+    try {
+      setRows(await api.post<TcMotor[]>("/api/motors/thrustcurve/search", { commonName: name.trim(), impulseClass: cls,
+        diameter: dia, manufacturer: mfr.trim(), availability: avail }));
+    } catch (e) { setErr((e as Error).message); } finally { setBusy(null); }
+  };
+  const importOne = async (m: TcMotor) => {
+    setErr(null); setDone(null); setBusy(m.motorId);
+    try {
+      const r = await api.post<{ keys: string[]; data_quality: string; source: string }>("/api/motors/thrustcurve/import", { motor_id: m.motorId });
+      setDone(`Imported ${m.manufacturerAbbrev || m.manufacturer} ${m.designation} as ${r.data_quality} data.`);
+      onImported(r.keys[0]);
+    } catch (e) { setErr((e as Error).message); } finally { setBusy(null); }
+  };
+  return (
+    <Card title="Find motors on ThrustCurve.org">
+      <form className="form grid-form" onSubmit={(e) => { e.preventDefault(); search(); }}>
+        <TextField label="Name (e.g. H128, K1000)" value={name} onChange={setName} />
+        <SelectField label="Impulse class" value={cls} onChange={setCls} options={CLASSES.map((c) => [c, c || "any"] as [string, string])} />
+        <SelectField label="Diameter (mm)" value={dia} onChange={setDia} options={DIAMETERS.map((d) => [d, d || "any"] as [string, string])} />
+        <TextField label="Manufacturer" value={mfr} onChange={setMfr} />
+        <SelectField label="Availability" value={avail} onChange={setAvail} options={[["available", "in production"], ["all", "all, incl. out of production"]]} />
+        <div className="field"><span>&nbsp;</span><button className="primary" type="submit" disabled={busy !== null || !(name.trim() || cls || dia || mfr.trim())}>
+          {busy === "search" ? "Searching…" : "Search"}</button></div>
+      </form>
+      <ErrorBox error={err} />
+      {done && <div className="ok-line">{done}</div>}
+      {rows && (rows.length === 0 ? <div className="empty">No motors match.</div> : (
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>Motor</th><th>Class</th><th>Ø mm</th><th>Avg N</th><th>I (N·s)</th><th>Burn s</th><th>Cert</th><th></th></tr></thead>
+            <tbody>
+              {rows.map((m) => (
+                <tr key={m.motorId}>
+                  <td>{m.manufacturerAbbrev || m.manufacturer} <strong>{m.designation}</strong>{m.type ? <span className="muted"> · {m.type}</span> : null}</td>
+                  <td>{m.impulseClass}</td><td>{fmt(m.diameter)}</td><td>{fmt(m.avgThrustN)}</td><td>{fmt(m.totImpulseNs)}</td>
+                  <td>{fmt(m.burnTimeS, 2)}</td><td>{m.certOrg ?? "—"}</td>
+                  <td><button onClick={() => importOne(m)} disabled={busy !== null || !m.dataFiles}>{busy === m.motorId ? "Importing…" : "Import"}</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
+      <div className="note">Imports the certification-body curve when ThrustCurve has one, otherwise the manufacturer's; user-contributed
+        curves are marked UNKNOWN so they can't pass readiness. Needs internet; offline, import a saved .eng file below.</div>
+    </Card>
+  );
+}
+
 export function MotorsPage() {
   const [motors, setMotors] = useState<Motor[]>([]);
   const [sel, setSel] = useState<string | null>(null);
@@ -140,6 +208,7 @@ export function MotorsPage() {
                 {curve.notes && <> · {curve.notes}</>}</div>
             </>
           )}
+          <ThrustCurveSearch onImported={async (k) => { await load(); setSel(k); }} />
           <StaticTest onSaved={async (k) => { await load(); setSel(k); }} />
           <Card title="Import .eng">
             <div className="form">

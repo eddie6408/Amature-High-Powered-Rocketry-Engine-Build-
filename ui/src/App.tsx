@@ -5,6 +5,7 @@ import { Icon, Logo } from "./components/icons";
 import { DesignPage } from "./pages/DesignPage";
 import { FlightsPage } from "./pages/FlightsPage";
 import { GroundPage } from "./pages/GroundPage";
+import { LaunchDayPage } from "./pages/LaunchDayPage";
 import { LaunchPage } from "./pages/LaunchPage";
 import { MissionsPage } from "./pages/MissionsPage";
 import { MotorsPage } from "./pages/MotorsPage";
@@ -18,6 +19,7 @@ const NAV: Array<[string, string, string, string]> = [
   ["missions", "Simulate", "3", "Missions and Monte Carlo"],
   ["launch", "Launch simulator", "3b", "Animated flight under real weather"],
   ["readiness", "Test & readiness", "4", "Flight-software fault suite, GO / NO-GO"],
+  ["launchday", "Launch day", "4b", "Safety code, flight card, checklist"],
   ["ground", "Fly", "5", "Ground station"],
   ["flights", "Analyse", "6", "Flights against prediction"],
 ];
@@ -66,6 +68,7 @@ export function App() {
         {page === "missions" && <MissionsPage missionId={route[1]} />}
         {page === "launch" && <LaunchPage missionId={route[1]} motorKey={route[2]} />}
         {page === "readiness" && <ReadinessPage missionId={route[1]} />}
+        {page === "launchday" && <LaunchDayPage missionId={route[1]} />}
         {page === "ground" && <GroundPage />}
         {page === "flights" && <FlightsPage flightId={route[1]} />}
       </div>

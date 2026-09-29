@@ -3,7 +3,7 @@
 AERODYNE is one application for the whole life of a rocket:
 
 ```text
-1 Design  →  2 Motors  →  3 Simulate  →  4 Test & readiness  →  5 Fly (ground station)  →  6 Analyse  →  next revision
+1 Design  →  2 Motors  →  3 Simulate  →  4 Test & readiness  →  4b Launch day  →  5 Fly (ground station)  →  6 Analyse  →  next revision
 ```
 
 Every number is labelled **MEASURED**, **SIMULATED**, **ESTIMATED**, **DERIVED** or
@@ -61,6 +61,12 @@ as you type. Pick the motor for analysis at the top to see loaded and burnout st
 raw load-cell log (CSV; N, lbf or kgf; s or ms). It removes the tare, finds the burn window and
 reports impulse with a 1σ uncertainty (calibration plus noise). It can save the result as a
 **MEASURED** dataset, with the raw log's SHA-256 recorded in its source.
+
+**Find motors on ThrustCurve.org** searches by name, impulse class, diameter or maker. *Import*
+downloads the best curve: the certifying organisation's data if ThrustCurve has it, otherwise the
+manufacturer's. User-contributed curves come in as UNKNOWN, so they can't pass readiness. The
+source (simfile ID and link) is recorded with the dataset. This needs internet; at the field,
+import a saved `.eng` file instead.
 
 Import the **certified or manufacturer** thrust curve (RASP `.eng`, for example from
 ThrustCurve.org) for every motor you might fly. Declare its quality and source honestly.
@@ -121,6 +127,23 @@ designed rocket on the pad rail and flies it from ignition to touchdown.
    The difference is the weather's effect on apogee, speeds, time to apogee, flight time and
    landing distance.
 
+**Two views.** *Illustrated* is a side-on drawing: rail and pad, smoke drifting downwind,
+flame, parachutes and a T+/altitude/speed overlay. The rocket is drawn larger than scale when
+zoomed out so it stays visible. *Earth 3D* flies the same simulation over the real terrain at
+the launch location:
+
+* **Cameras:** *Pad camera* stands about 90 m from the pad across the wind and tracks the rocket
+  up and back down. *Chase* follows it. *Overview* shows the whole trajectory, the pad and the
+  predicted landing point; drag to orbit.
+* **Map:** *Satellite* (Esri World Imagery), *Street map* (OpenStreetMap), *Terrain only* (works
+  offline from cached terrain), or *Google 3D*: Google's photorealistic 3D Earth. Google 3D needs
+  your own Google Maps Platform API key with the Map Tiles API enabled (it has a free monthly
+  allowance). The key is stored only in your browser.
+* **Offline at the field:** press *Cache terrain* at home to download the elevation around the
+  site (about 4 km). The cache lives in `~/.cache/aerodyne/tiles`; set `AERODYNE_TILE_CACHE` to
+  move it. Satellite imagery is not cached, so without internet the view falls back to
+  sun-shaded terrain.
+
 Weather changes the flight physically: temperature, pressure and humidity set the air density,
 which affects drag and Mach number. Wind follows a power-law profile with height, plus random
 gusts. Everything here is **SIMULATED**, and the checklist is a rehearsal aid, not a substitute
@@ -136,7 +159,41 @@ for your RSO's.
   It only uses Monte Carlo and SIL results computed for *exactly* the current design, motor
   and mission. Change anything and they must be re-run.
 
+* **Fin flutter:** every fin set is checked along the simulated flight with the NACA TN 4197
+  method (flutter speed against airspeed at each altitude). PASS needs a 1.5× margin. The result
+  depends strongly on the material's shear modulus. Typical values are built in (G10 and
+  fiberglass 2.9 GPa, carbon fibre 5 GPa, aluminium 26 GPa, birch plywood 0.62 GPa). Enter your
+  laminate's own value on the fin set when you know it.
+
 Readiness is an engineering aid. The RSO makes the final call under your safety code.
+
+## 4b. Launch day: safety code, flight card, checklist
+
+**Launch day** turns a mission into what you hand the RSO:
+
+1. **Flyer:** your name, organisation, member number and certification level. They are saved
+   in the project.
+2. **Conditions at the pad:** press *Live weather at the mission site* for wind, gusts, cloud
+   cover and visibility (ESTIMATED, from a forecast model), or type them in.
+3. **Check and build flight card** runs the mission and reviews it against the quantitative
+   items of the NAR/Tripoli high-power safety code and FAA Part 101:
+   * a certified commercial motor, and a flyer certified for its impulse (L1 up to 640 N·s,
+     L2 up to 5,120 N·s, L3 up to 40,960 N·s);
+   * a stable rocket at your mission's minimum margin;
+   * liftoff weight no more than ⅓ of the motor's average thrust;
+   * launcher within 20° of vertical, and wind no more than 20 mph (gusts included);
+   * cloud cover no more than 5/10 and visibility at least 5 miles (14 CFR 101.25);
+   * apogee under the waiver ceiling;
+   * landing energy (a 75 ft·lbf guideline) and fin flutter margin;
+   * the minimum personnel distance from the NAR table (tick *complex rocket* for clusters and
+     staged rockets).
+4. **Flight card:** rocket, motor, predicted flight, recovery and safety results, with signature
+   lines for the RSO. *Print* prints just the card.
+5. **Pre-flight checklist:** recovery, avionics, airframe, pad and post-flight items. The ticks
+   are kept per mission in this browser.
+
+These are checklist aids. Your club's code, the range, the FAA waiver and the RSO take
+precedence.
 
 ## 5. Fly: launch day with the ground station
 

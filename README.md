@@ -35,9 +35,10 @@ The app walks one rocket from idea to flight and back:
 | Step | What you do |
 |---|---|
 | **1 · Design** | Build the vehicle from components or import OpenRocket. Live side profile, mass, CG/CP and stability. Enter measured masses as you build. Revisions lock once flown. |
-| **2 · Motors** | Import certified/manufacturer thrust curves (`.eng`) with declared source and quality. |
-| **3 · Simulate** | A mission = revision + motor + site + wind + limits. 6-DOF prediction and Monte Carlo dispersion (apogee percentiles, landing ellipse). The **launch simulator** puts your rocket on the rail, runs a pad checklist and countdown, and animates the flight to touchdown under the wind, temperature, humidity and pressure you set, then compares the results with a calm standard day. **My location** uses the device's location services and loads live weather (including wind aloft) for that spot; manual coordinates work offline. |
+| **2 · Motors** | Search ThrustCurve.org and import certified/manufacturer curves, or import `.eng` files, with declared source and quality. |
+| **3 · Simulate** | A mission = revision + motor + site + wind + limits. 6-DOF prediction and Monte Carlo dispersion (apogee percentiles, landing ellipse). The **launch simulator** puts your rocket on the rail, runs a pad checklist and countdown, and animates the flight to touchdown under the wind, temperature, humidity and pressure you set, then compares the results with a calm standard day. **Earth 3D** flies it over real terrain and satellite imagery (or Google's photorealistic 3D tiles with your API key), with pad, chase and overview cameras; terrain can be cached for the field. **My location** uses the device's location services and loads live weather (including wind aloft) for that spot; manual coordinates work offline. |
 | **4 · Test & readiness** | Fly the real C flight software through 14 fault scenarios, then get a GO / NO-GO review with evidence for every check. |
+| **4b · Launch day** | Flyer profile, safety-code review (certification level, stability, ⅓ thrust rule, launcher angle, 20 mph wind, FAA cloud and visibility limits, waiver ceiling, flutter, minimum distances), printable RSO flight card and pre-flight checklist. |
 | **5 · Fly** | Ground station: serial/UDP radio (or a rehearsal), pad status, live telemetry, ground track, honest landing estimate. The recording is filed with the flight as write-once raw data. |
 | **6 · Analyse** | Import altimeter/flight-computer logs (any CSV, units confirmed by you) or the telemetry capture. Reconstruct, compare with the prediction, see possible contributors, then revise the design. |
 
@@ -99,6 +100,10 @@ curve. It shows how the tools fit together; it is not a flight-ready design.
 | Reporting (Markdown) | `aerodyne.reporting` | ✅ |
 | CAD integration: STEP (exact B-rep via OpenCASCADE/gmsh), STL, Fusion/SolidWorks/FreeCAD mass-property CSV; upload in the designer | `aerodyne.cad` | ✅ STEP needs `pip install ".[cad]"` |
 | OpenRocket `.ork` import + cross-validation against OpenRocket's own stored mass/CG/CP/Cd (`aerodyne validate-ork`) | `aerodyne.interop` | ✅ all 22 example files from the OpenRocket repository import; vs OpenRocket on files with supported parts: CP within +10 % (avg ~6 % aft), dry mass/CG within a few % (weighed values honoured), zero-lift Cd mean ±18 %; pods, tube fins, parallel stages reported as unsupported |
+| Fin flutter (NACA TN 4197) along the simulated flight | `aerodyne.structures.flutter` | ✅ ESTIMATED; typical shear moduli, per-fin override |
+| HPR safety code, certification levels, NAR distance table, FAA 101.25 weather limits | `aerodyne.safety` | ✅ checklist aid |
+| ThrustCurve.org search and download | `aerodyne.propulsion.thrustcurve` | ✅ needs internet |
+| Terrain tile cache for the Earth 3D view | `aerodyne.environment.tiles` | ✅ offline at the field once cached |
 | Digital-twin loop: flight → calibration proposal → adopted as a new revision used by later simulations, with history | `aerodyne.app.services`, Design/Analyse pages | ✅ |
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for interfaces and data flow and

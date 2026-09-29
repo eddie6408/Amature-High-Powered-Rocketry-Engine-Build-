@@ -5,7 +5,7 @@ const PATHS: Record<string, string> = {
   motors: "M12 3c3 4 5 6 5 10a5 5 0 0 1-10 0c0-2 1-4 2-5 0 2 1 3 2 3 0-3 0-5 1-8z",
   missions: "M3 17l6-6 4 4 8-8M15 7h6v6",
   launch: "M12 2c3 3 4 7 4 11l-2 3h-4l-2-3c0-4 1-8 4-11zM10 16l-3 4M14 16l3 4M12 9.5a1.5 1.5 0 1 0 0-.01",
-  checklists: "M9 6h11M9 12h11M9 18h11M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2",
+  launchday: "M9 6h11M9 12h11M9 18h11M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2",
   readiness: "M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6zM8.5 12l2.5 2.5 4.5-5",
   ground: "M12 12v9M8 21h8M8.5 8.5a5 5 0 0 1 7 0M5.5 5.5a9 9 0 0 1 13 0M12 12a1 1 0 1 0 0-.01",
   flights: "M3 12h4l3-8 4 16 3-8h4",

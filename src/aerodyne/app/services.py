@@ -184,6 +184,34 @@ def import_motor(ws: Workspace, text: str, quality: str, source: str, source_dat
     return {"keys": keys}
 
 
+def thrustcurve_search(criteria: dict, fetch=None) -> list[dict]:
+    from aerodyne.propulsion import thrustcurve
+
+    try:
+        return thrustcurve.search(criteria) if fetch is None else fetch(criteria)
+    except thrustcurve.ThrustCurveError as exc:
+        raise BadRequest(str(exc)) from exc
+
+
+def thrustcurve_import(ws: Workspace, motor_id: str, fetch=None) -> dict:
+    """Download a motor's best curve from ThrustCurve.org and add it with its provenance."""
+    from datetime import date
+
+    from aerodyne.propulsion import thrustcurve
+
+    try:
+        f = thrustcurve.download(motor_id) if fetch is None else fetch(motor_id)
+    except thrustcurve.ThrustCurveError as exc:
+        raise BadRequest(str(exc)) from exc
+    label = {"cert": "certification data", "mfr": "manufacturer data", "user": "user-contributed data"}.get(f["source_kind"], "data")
+    source = f"ThrustCurve.org simfile {f.get('simfile_id') or '?'} ({label})" + (f" {f['info_url']}" if f.get("info_url") else "")
+    try:
+        keys = ws.import_eng(f["text"], f["quality"], source, date.today().isoformat())
+    except (ValueError, IndexError) as exc:
+        raise BadRequest(f"could not parse the downloaded .eng file: {exc}") from exc
+    return {"keys": keys, "data_quality": f["quality"].value, "source": source}
+
+
 # ------------------------------------------------------------------------------- missions
 def aero_for(design: Design):
     """Aero model of a design, including an adopted flight calibration."""
@@ -366,7 +394,9 @@ def flight_card(ws: Workspace, mission_id: str, conditions: dict | None = None) 
         ceiling_agl_m=m.limits.altitude_ceiling_agl_m,
         landing_energy_j=None if landing_rate is None else 0.5 * spent.mass * landing_rate ** 2,
         complex_rocket=bool(c.get("complex_rocket")),
-        flutter_ratio=min((f["min_ratio"] for f in flutter), default=None))
+        flutter_ratio=min((f["min_ratio"] for f in flutter), default=None),
+        margin_cal=(x_cp - full.cg) / v.reference_diameter, min_margin_cal=m.limits.min_margin_cal,
+        motor_data_quality=motor.metadata.data_quality.value)
     return _clean({
         "mission": {"id": m.id, "name": m.name, "site": m.site},
         "flyer": prof,

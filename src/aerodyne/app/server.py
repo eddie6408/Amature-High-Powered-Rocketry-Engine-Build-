@@ -60,6 +60,8 @@ class App:
         r("POST", r"/api/wind/parse", lambda q, b: svc.parse_wind(b))
         r("POST", r"/api/motors/import", lambda q, b: svc.import_motor(
             ws_, b["text"], b.get("quality", "UNKNOWN"), b.get("source", ""), b.get("source_date", "")))
+        r("POST", r"/api/motors/thrustcurve/search", lambda q, b: svc.thrustcurve_search(b))
+        r("POST", r"/api/motors/thrustcurve/import", lambda q, b: svc.thrustcurve_import(ws_, str(b.get("motor_id", ""))))
         # missions and runs
         r("GET", r"/api/missions", lambda q, b: [m.to_dict() for m in ws_.list_missions()])
         r("POST", r"/api/missions", lambda q, b: svc.save_mission(ws_, b))

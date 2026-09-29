@@ -66,7 +66,8 @@ def safety_review(*, total_impulse_ns: float, average_thrust_n: float, liftoff_m
                   cloud_cover_pct: float | None = None, visibility_m: float | None = None,
                   apogee_agl_m: float | None = None, ceiling_agl_m: float | None = None,
                   landing_energy_j: float | None = None, complex_rocket: bool = False,
-                  flutter_ratio: float | None = None) -> dict[str, Any]:
+                  flutter_ratio: float | None = None, margin_cal: float | None = None, min_margin_cal: float = 1.0,
+                  motor_data_quality: str | None = None) -> dict[str, Any]:
     items: list[SafetyItem] = []
     add = items.append
     level, label = required_cert_level(total_impulse_ns)
@@ -77,6 +78,16 @@ def safety_review(*, total_impulse_ns: float, average_thrust_n: float, liftoff_m
         add(SafetyItem("cert", "Flyer certification", "PASS" if flyer_cert_level >= level else "FAIL",
                        f"flyer Level {flyer_cert_level}; motor needs {label}", f"≥ Level {level}",
                        "NAR/TRA certification levels"))
+    if motor_data_quality is not None:
+        q = motor_data_quality.upper()
+        st = "PASS" if q in ("CERTIFIED", "MANUFACTURER", "MEASURED") else "FAIL" if q == "HYPOTHETICAL" else "WARN"
+        add(SafetyItem("motor", "Certified commercial motor", st, f"thrust data {q}",
+                       "fly only certified, commercially made motors (curve from the cert body or maker)",
+                       "NAR HPR Safety Code / Tripoli"))
+    if margin_cal is not None:
+        add(SafetyItem("stability", "Static stability (loaded)", "PASS" if margin_cal >= min_margin_cal else "FAIL",
+                       f"{margin_cal:.2f} cal", f"≥ {min_margin_cal:.1f} cal (mission limit; codes require a stable rocket)",
+                       "NAR HPR Safety Code: launch only stable rockets"))
     tw = average_thrust_n / (liftoff_mass_kg * 9.80665) if liftoff_mass_kg > 0 else 0.0
     add(SafetyItem("liftoff_weight", "Liftoff weight vs average thrust", "PASS" if tw >= MIN_THRUST_TO_WEIGHT else "FAIL",
                    f"{tw:.1f} : 1 ({liftoff_mass_kg:.2f} kg, {average_thrust_n:.0f} N average)",
