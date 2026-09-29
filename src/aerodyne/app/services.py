@@ -564,6 +564,22 @@ def static_test(ws: Workspace, data: dict) -> dict:
     return _clean(out)
 
 
+def about(started_at: str) -> dict:
+    """Version, source revision and server start time for the app footer."""
+    import subprocess
+    from pathlib import Path
+
+    from aerodyne import __version__
+
+    commit = None
+    try:
+        commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=Path(__file__).resolve().parent,
+                                capture_output=True, text=True, timeout=2).stdout.strip() or None
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return {"version": __version__, "commit": commit, "started_at": started_at}
+
+
 def density_altitude(density: float) -> float:
     """Altitude in the standard atmosphere that has this air density."""
     from aerodyne.environment.atmosphere import StandardAtmosphere

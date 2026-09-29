@@ -12,6 +12,7 @@ import mimetypes
 import queue
 import re
 import traceback
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
@@ -29,12 +30,14 @@ MAX_BODY = 64 * 1024 * 1024
 class App:
     def __init__(self, ws: Workspace) -> None:
         self.ws = ws
+        self.started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
         self.jobs = svc.JobManager()
         self.ground = GroundSession(ws)
         self.routes: list[tuple[str, re.Pattern, Callable[..., Any]]] = []
         r = self.route
         ws_ = ws
         r("GET", r"/api/workspace", lambda q, b: ws_.status())
+        r("GET", r"/api/about", lambda q, b: svc.about(self.started_at))
         r("GET", r"/api/schema", lambda q, b: svc.get_schema())
         # vehicles / design
         r("GET", r"/api/vehicles", lambda q, b: ws_.list_vehicles())

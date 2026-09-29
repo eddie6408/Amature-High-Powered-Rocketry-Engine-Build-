@@ -189,7 +189,7 @@ function Editor({ vehicleId, schema, motors, onSaved }: { vehicleId: string; sch
                      options={motors.map((mo) => [mo.key, `${mo.designation} (${mo.data_quality.toLowerCase()})`])} />}>
         {analysis && <Profile shapes={analysis.profile} length={analysis.length_m ?? 1}
                               cg={m?.FULL?.cg_m ?? m?.EMPTY?.cg_m} cgSpent={m?.MOTOR_SPENT?.cg_m} cp={analysis.cp_m} />}
-        <div className="note">Blue = airframe and fins, grey = internal items, darker grey = motor, dashed outline = inner tubes. CG with motor loaded / at burnout; CP from Barrowman (ESTIMATED).</div>
+        <div className="note">Teal = airframe and fins, grey = internal items, darker grey = motor, dashed outline = inner tubes. CG with motor loaded / at burnout; CP from Barrowman (ESTIMATED).</div>
       </Card>
 
       <section className="tiles">
