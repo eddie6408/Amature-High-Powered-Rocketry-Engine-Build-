@@ -77,6 +77,18 @@ as you type. Pick the motor for analysis at the top to see loaded and burnout st
 Build records are kept per rocket and carry over to new revisions. Records for parts that no
 longer exist are kept and listed.
 
+## 1c. Recovery
+
+* **Parachute sizing:** enter the descending mass (motor spent), the target rate, the canopy's Cd,
+  and the site altitude and temperature. The calculator gives the diameter needed at that air
+  density and the standard sizes around it, with the resulting descent rate and the landing
+  energy of each section on its own line (75 ft·lbf is a common guideline). Presets are provided
+  for a main (5.5 m/s) and a drogue (25 m/s).
+* **Drift and descent:** for a mission, a table of drift from apogee and descent time over surface
+  wind (up to the 20 mph limit) and main-deploy altitude. It uses your recovery devices and the
+  simulated apogee. Cells are marked against the recovery-field radius (inside, near the edge,
+  outside).
+
 ## 2. Motors
 
 **Static tests.** If you static-test commercial motors, *Characterize a static test* reads the

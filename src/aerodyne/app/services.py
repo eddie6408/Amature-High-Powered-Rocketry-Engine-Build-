@@ -345,6 +345,43 @@ def readiness(ws: Workspace, mission_id: str) -> dict:
     return ws.run(run_id)
 
 
+# ------------------------------------------------------------------------------- recovery
+def recovery_size(data: dict) -> dict:
+    from aerodyne.recovery.sizing import CANOPY_CD, size_canopy
+
+    try:
+        out = size_canopy(float(data["mass_kg"]), float(data["target_rate_mps"]), float(data.get("cd") or 1.5),
+                          float(data.get("altitude_msl") or 0.0),
+                          None if data.get("temperature_c") in (None, "") else float(data["temperature_c"]),
+                          [float(x) for x in data.get("sections_kg") or []])
+    except KeyError as exc:
+        raise BadRequest(f"missing {exc}") from exc
+    return _clean({**out, "canopy_cd": CANOPY_CD})
+
+
+def recovery_drift(ws: Workspace, mission_id: str, data: dict) -> dict:
+    """Drift and descent table for a mission's recovery system over wind and main-deploy altitude."""
+    from aerodyne.recovery.sizing import drift_table
+
+    m = ws.mission(mission_id)
+    cfg, d = build_config(ws, m)
+    if d.recovery is None:
+        raise BadRequest("this design has no recovery devices")
+    try:
+        res = FlightSimulator(cfg).run()
+    except (ValueError, RuntimeError) as exc:
+        raise BadRequest(f"no flight: {exc}") from exc
+    spent = MassPropertiesEngine(d.vehicle).configuration("MOTOR_SPENT", cfg.motor).mass
+    wfrom = float(m.wind.get("from_deg", 270.0)) if isinstance(m.wind.get("from_deg"), (int, float)) else 270.0
+    out = drift_table(spent, d.recovery, float(res.summary()["apogee_agl_m"]), float(m.site.get("altitude_msl", 0.0)),
+                      m.atmosphere_model(), [float(w) for w in data["winds"]] if data.get("winds") else None,
+                      [float(a) for a in data["main_altitudes"]] if data.get("main_altitudes") else None, wfrom)
+    return _clean({**out, "mass_kg": spent, "field_radius_m": m.limits.field_radius_m,
+                   "devices": [{"name": x.name, "diameter_m": x.diameter, "cd": x.cd, "deploy_event": x.deploy_event,
+                                "deploy_altitude_agl": x.deploy_altitude_agl} for x in d.recovery.devices],
+                   "kind": "SIMULATED"})
+
+
 # ------------------------------------------------------------------------------ build log
 def build_status(ws: Workspace, vehicle_id: str, revision: str | None = None) -> dict:
     """Parts of a design with estimated vs weighed mass, joined with their build records."""

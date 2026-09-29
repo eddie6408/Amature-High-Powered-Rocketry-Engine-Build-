@@ -598,3 +598,16 @@ table.extras { table-layout: fixed; }
 table.extras input:not([type=checkbox]) { width: 100%; padding: 4px 6px; font-size: 12.5px; }
 table.extras td { padding: 4px; }
 table.extras .link { margin: 0; padding: 0; font-size: 12px; }
+
+/* recovery */
+.dash-row.even { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
+@media (max-width: 1100px) { .dash-row.even { grid-template-columns: minmax(0, 1fr); } }
+.big-answer { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; margin: 12px 0 8px; }
+.big-answer strong { font-size: 26px; }
+table.drift td.cell { text-align: center; }
+table.drift th { text-align: center; }
+table.drift td.cell strong { display: block; font-size: 13px; }
+table.drift td.cell span { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); }
+table.drift td.in { background: color-mix(in srgb, var(--good) 12%, transparent); }
+table.drift td.edge { background: color-mix(in srgb, var(--warning) 16%, transparent); }
+table.drift td.out { background: color-mix(in srgb, var(--critical) 16%, transparent); }

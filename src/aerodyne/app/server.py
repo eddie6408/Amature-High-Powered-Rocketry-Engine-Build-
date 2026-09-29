@@ -82,6 +82,8 @@ class App:
         r("PUT", r"/api/vehicles/(?P<vid>[^/]+)/build", lambda q, b, vid: (ws_.save_build(vid, b), svc.build_status(ws_, vid))[1])
         r("POST", r"/api/vehicles/(?P<vid>[^/]+)/build/log", lambda q, b, vid: ws_.add_build_log(vid, b))
         r("DELETE", r"/api/vehicles/(?P<vid>[^/]+)/build/log/(?P<eid>[^/]+)", lambda q, b, vid, eid: ws_.delete_build_log(vid, eid))
+        r("POST", r"/api/recovery/size", lambda q, b: svc.recovery_size(b))
+        r("POST", r"/api/missions/(?P<mid>[^/]+)/recovery-drift", lambda q, b, mid: svc.recovery_drift(ws_, mid, b))
         r("GET", r"/api/sites", lambda q, b: ws_.list_sites())
         r("POST", r"/api/sites", lambda q, b: ws_.save_site(b))
         r("DELETE", r"/api/sites/(?P<sid>[^/]+)", lambda q, b, sid: ws_.delete_site(sid))
