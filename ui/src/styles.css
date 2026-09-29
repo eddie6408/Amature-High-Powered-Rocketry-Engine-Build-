@@ -517,3 +517,49 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
   .card { box-shadow: none; border: 1px solid #999; }
   .flight-card { break-inside: avoid; }
 }
+
+/* home dashboard */
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.kpi .value { font-size: 30px; margin-top: 4px; }
+.kpi .value.pos { color: var(--good-text); }
+.kpi .value.neg { color: var(--critical-text); }
+.mission-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 12px; }
+.mission-card { display: grid; gap: 14px; }
+.mc-head { display: flex; align-items: flex-start; gap: 12px; }
+.mc-head > div { flex: 1; min-width: 0; }
+.mc-head strong { display: block; font-size: 15px; }
+.mc-head small { color: var(--text-muted); font-size: 12px; }
+.mc-icon { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; color: #042a23;
+  background: linear-gradient(135deg, #20d3b3, #0e8f7c); flex: none; }
+.mc-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.mc-stats small { display: block; font-size: 12px; color: var(--text-secondary); }
+.mc-stats b { display: block; font-size: 20px; font-weight: 650; margin: 3px 0 1px; }
+.mc-stats span { font-size: 11.5px; color: var(--text-muted); font-family: var(--font-mono); }
+.mc-foot { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; font-size: 12.5px; }
+.mc-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.state.bad { color: var(--critical-text); border-color: color-mix(in srgb, var(--critical) 55%, transparent); background: transparent; }
+.dash-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+@media (max-width: 1100px) { .dash-row { grid-template-columns: minmax(0, 1fr); } }
+.card-sub { font-size: 12.5px; color: var(--text-secondary); margin: -4px 0 10px; }
+.card-head { align-items: center; }
+.legend span { display: inline-flex; align-items: center; }
+.legend { margin: 0 0 6px; justify-content: flex-end; }
+.bar.s2 { fill: var(--series-2); }
+.donut { display: flex; flex-wrap: wrap; gap: 18px; align-items: center; }
+.donut .donut-big { font-size: 30px; font-weight: 700; fill: var(--text-primary); font-family: inherit; }
+.donut ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; flex: 1; min-width: 160px; font-size: 13px; }
+.donut li { display: flex; align-items: center; gap: 8px; }
+.donut li i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.donut li b { margin-left: auto; font-family: var(--font-mono); }
+.donut li .muted { width: 40px; text-align: right; font-family: var(--font-mono); font-size: 12px; }
+.activity { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; font-size: 13px; }
+.activity li { display: grid; grid-template-columns: 10px 1fr; column-gap: 10px; align-items: baseline; }
+.activity li .muted { grid-column: 2; font-size: 11.5px; font-family: var(--font-mono); }
+.activity .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); align-self: center; }
+.activity .dot.k-readiness { background: var(--series-2); }
+.activity .dot.k-sil { background: #8fb7ff; }
+tr.clickable { cursor: pointer; }
+details.workflow summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+details.workflow .steps { margin-top: 12px; }
+.dash table td, .state { white-space: nowrap; }
+.dash .card table { display: block; overflow-x: auto; }

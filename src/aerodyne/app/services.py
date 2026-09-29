@@ -345,6 +345,60 @@ def readiness(ws: Workspace, mission_id: str) -> dict:
     return ws.run(run_id)
 
 
+# ----------------------------------------------------------------------------- dashboard
+def dashboard(ws: Workspace) -> dict:
+    """Overview of the project: missions and their review state, flights against prediction,
+    readiness check tally and recent activity."""
+    def motor_name(key: str) -> str:
+        try:
+            mm = ws.motor(key).metadata
+            return f"{mm.manufacturer} {mm.designation}"
+        except (KeyError, WorkspaceError):
+            return key
+
+    flights = []
+    for f in ws.list_flights():
+        an = ws.flight_analysis(f["flight_id"]) or {}
+        apo = next((r for r in an.get("comparison", []) if r.get("key") == "apogee_agl_m"), None) or {}
+        flights.append({"flight_id": f["flight_id"], "date": f.get("date"), "vehicle_id": f["vehicle_id"],
+                        "revision": f["revision"], "motor": motor_name(f["motor_key"]), "mission_id": f.get("mission_id"),
+                        "status": an.get("status") or "NOT ANALYSED", "apogee_measured_m": apo.get("actual"),
+                        "apogee_predicted_m": apo.get("simulated"), "apogee_error_pct": apo.get("pct_error"),
+                        "raw_files": len(f.get("raw_files", []))})
+    flights.sort(key=lambda r: (r["date"] or "", r["flight_id"]))
+
+    missions, tally = [], {"PASS": 0, "WARN": 0, "FAIL": 0, "NOT RUN": 0, "INFO": 0}
+    for m in ws.list_missions():
+        try:
+            want = mission_hashes(ws, m)
+        except (KeyError, WorkspaceError):
+            continue
+        latest = {}
+        for kind in ("simulation", "montecarlo", "sil", "readiness"):
+            runs = ws.list_runs(m.id, kind)
+            if runs:
+                full = ws.run(runs[0]["id"])
+                latest[kind] = {"id": full["id"], "created": full.get("created"), "summary": full.get("summary"),
+                                "current": full.get("hashes") == want}
+                if kind == "readiness" and full.get("hashes") == want:
+                    for c in full.get("checks", []):
+                        tally[c["status"]] = tally.get(c["status"], 0) + 1
+        rd = latest.get("readiness")
+        state = "NOT REVIEWED" if not rd else (rd["summary"] or {}).get("status", "?") if rd["current"] else "STALE"
+        missions.append({"id": m.id, "name": m.name, "vehicle_id": m.vehicle_id, "revision": m.revision,
+                         "motor": motor_name(m.motor_key), "state": state, "latest": latest,
+                         "ceiling_m": m.limits.altitude_ceiling_agl_m})
+    errs = [abs(f["apogee_error_pct"]) for f in flights if f["apogee_error_pct"] is not None]
+    cal = sum(1 for v in ws.registry.vehicles() for r in v.revisions if (r.payload or {}).get("calibration"))
+    return _clean({
+        "workspace": ws.status(), "missions": missions, "flights": flights, "checks": tally,
+        "recent_runs": ws.list_runs()[:8],
+        "totals": {"flights": len(flights), "analysed": len(errs),
+                   "mean_abs_apogee_error_pct": (sum(errs) / len(errs)) if errs else None,
+                   "calibrations": cal, "missions_go": sum(1 for m in missions if m["state"] == "GO")},
+    })
+
+
 # ---------------------------------------------------------------------------- launch day
 def flight_card(ws: Workspace, mission_id: str, conditions: dict | None = None) -> dict:
     """Everything for the RSO flight card plus the safety-code review for this mission.

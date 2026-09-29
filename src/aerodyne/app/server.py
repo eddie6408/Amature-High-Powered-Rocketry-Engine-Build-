@@ -39,6 +39,7 @@ class App:
         r = self.route
         ws_ = ws
         r("GET", r"/api/workspace", lambda q, b: ws_.status())
+        r("GET", r"/api/dashboard", lambda q, b: svc.dashboard(ws_))
         r("GET", r"/api/about", lambda q, b: svc.about(self.started_at))
         r("GET", r"/api/schema", lambda q, b: svc.get_schema())
         # vehicles / design

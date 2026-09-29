@@ -4,6 +4,7 @@ import { api } from "./api";
 import { Icon, Logo } from "./components/icons";
 import { DesignPage } from "./pages/DesignPage";
 import { FlightsPage } from "./pages/FlightsPage";
+import { HomePage } from "./pages/HomePage";
 import { GroundPage } from "./pages/GroundPage";
 import { LaunchDayPage } from "./pages/LaunchDayPage";
 import { LaunchPage } from "./pages/LaunchPage";
@@ -62,7 +63,7 @@ export function App() {
       </nav>
       <div className="content">
         <StatusBar title={current[1]} sub={current[3]} theme={theme} setTheme={setTheme} />
-        {page === "home" && <Home ws={ws} />}
+        {page === "home" && <HomePage />}
         {page === "design" && <DesignPage vehicleId={route[1]} />}
         {page === "motors" && <MotorsPage />}
         {page === "missions" && <MissionsPage missionId={route[1]} />}
@@ -93,32 +94,5 @@ function StatusBar({ title, sub, theme, setTheme }: { title: string; sub: string
                 title="Dark mode"><Icon name="moon" size={16} /><span>Dark</span></button>
       </div>
     </header>
-  );
-}
-
-function Home({ ws }: { ws: WsStatus | null }) {
-  const steps: Array<[string, string, string]> = [
-    ["design", "Design the vehicle", "Build it from components (or import OpenRocket), weigh parts as you build and enter measured masses. Stability updates live."],
-    ["motors", "Load real motor data", "Import the certified curve for each motor you might fly. Synthetic curves are for learning only and block readiness."],
-    ["missions", "Predict the flight", "Pick vehicle revision + motor + site + wind + limits. Run the 6-DOF simulation and a Monte Carlo for dispersion."],
-    ["readiness", "Test before building", "Fly the flight software through the fault suite, then get a GO / NO-GO with evidence for every check."],
-    ["ground", "Fly it", "Create the flight record, connect the ground radio, watch telemetry and the landing estimate; the capture is filed with the flight."],
-    ["flights", "Learn from it", "Import the logs, reconstruct the flight, compare with the prediction, review possible contributors, and revise the design."],
-  ];
-  return (
-    <div className="page stack">
-      <p className="lead">From idea to flight and back: every number is labelled MEASURED, SIMULATED, ESTIMATED, DERIVED or
-        HYPOTHETICAL, raw flight data is never modified, and flown configurations are locked.</p>
-      {ws && (
-        <section className="tiles">
-          {([["Vehicles", ws.vehicles], ["Flown revisions", ws.flown_revisions], ["Motors", ws.motors], ["Missions", ws.missions], ["Flights", ws.flights]] as const)
-            .map(([l, v]) => <div className="tile" key={l}><div className="label">{l}</div><div className="value">{v}</div></div>)}
-        </section>
-      )}
-      <ol className="steps">
-        {steps.map(([id, t, d]) => <li key={id}><a href={`#/${id}`}><strong>{t}</strong></a><p>{d}</p></li>)}
-      </ol>
-      {ws && <div className="note">Workspace: {ws.root}</div>}
-    </div>
   );
 }
