@@ -46,8 +46,14 @@ as you type. Pick the motor for analysis at the top to see loaded and burnout st
 * **Revisions.** An ACTIVE revision can be edited freely. *New revision…* freezes it and saves
   your changes as the next one, with a change note. After a flight, that revision is FLOWN and
   locked forever; *Edit as new revision* continues from it.
-* **CAD.** From Python, STL parts (`aerodyne.cad.stl_part`) and Fusion/SolidWorks mass-property
-  CSVs (`aerodyne.cad.read_mass_properties_csv`) become components.
+* **CAD.** *Add from CAD* takes a STEP or STL file plus material density, the model axis that
+  points aft, and the station of the model origin. It gives exact mass, CG and inertia
+  (ESTIMATED until weighed). STEP needs `pip install ".[cad]"`.
+* **OpenRocket.** Import an `.ork` when creating a vehicle. Check it with
+  `aerodyne validate-ork my-design.ork`. If the file was saved after running a simulation in
+  OpenRocket, this compares AERODYNE's dry mass, CG, CP and drag with OpenRocket's own
+  numbers. Freeform and elliptical fins are imported as equal-area trapezoids (flagged
+  ESTIMATED). Pods, tube fins and parallel stages are reported as unsupported.
 
 ## 2. Motors
 
@@ -121,7 +127,13 @@ contributors** (evidence, not blame) and the digital-twin validation status.
 *Propose drag calibration* estimates the drag scale that would reproduce the measured apogee.
 It's a proposal to review, because mass, motor or wind can mimic a drag error.
 
-Then go back to **Design**, create the next revision, and repeat.
+**Adopt as new revision** (after reviewing the contributors) closes the digital-twin loop.
+The flown revision stays locked. A new revision carries the calibration and its provenance
+(source flight, method, date). Every later simulation of that revision uses it, and the Design
+page shows the vehicle's twin history: each flight, its validation status and apogee error,
+and the calibrations adopted.
+
+Then fly the calibrated revision and repeat.
 
 ## Flight computer
 

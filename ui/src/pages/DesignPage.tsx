@@ -17,6 +17,9 @@ interface Analysis {
   margins_cal?: Record<string, number>; components?: Array<{ name: string; mass_kg: number; cg_m: number; kind: string }>;
 }
 interface Detail extends VehicleSummary { revision: string; design: DesignPayload }
+interface Twin { flights: Array<{ flight_id: string; date: string; revision: string; status: string | null;
+  apogee_error_pct: number | null; prediction_basis: string | null }>;
+  calibrations: Array<{ revision: string; cd_scale: number; source_flight: string; adopted: string }> }
 
 export function DesignPage({ vehicleId }: { vehicleId?: string }) {
   const [vehicles, setVehicles] = useState<VehicleSummary[]>([]);
@@ -100,7 +103,10 @@ function Editor({ vehicleId, schema, motors, onSaved }: { vehicleId: string; sch
   const [msg, setMsg] = useState<string | null>(null);
   const [addType, setAddType] = useState("PointMass");
   const [note, setNote] = useState("");
+  const [twin, setTwin] = useState<Twin | null>(null);
+  const [cad, setCad] = useState({ density: 1240, axis: "+z", station: 0, length: 0, units: "mm" });
   const timer = useRef<number | undefined>(undefined);
+  useEffect(() => { api.get<Twin>(`/api/vehicles/${vehicleId}/twin`).then(setTwin).catch(() => setTwin(null)); }, [vehicleId, detail?.revision]);
 
   const load = (rev?: string) =>
     api.get<Detail>(`/api/vehicles/${vehicleId}${rev ? `?revision=${rev}` : ""}`).then((d) => {
@@ -197,6 +203,26 @@ function Editor({ vehicleId, schema, motors, onSaved }: { vehicleId: string; sch
         <Stat label="Margin at burnout" value={margin?.MOTOR_SPENT !== undefined ? fmt(margin.MOTOR_SPENT, 2) : "—"} unit="cal" />
       </section>
       {analysis?.warnings.map((w) => <div key={w} className="warn-line">⚠ {w}</div>)}
+      {design.calibration && (design.calibration as { cd_scale?: number }).cd_scale && (
+        <div className="banner warn">
+          <StatusPill status="INFO" label="Calibrated from flight" /> drag ×{fmt(Number((design.calibration as Record<string, unknown>).cd_scale), 3)} from
+          {" "}{String((design.calibration as Record<string, unknown>).source_flight)} (ESTIMATED) - used by every simulation of this revision.
+        </div>
+      )}
+      {twin && twin.flights.length > 0 && (
+        <Card title="Digital twin history">
+          <table>
+            <thead><tr><th>Flight</th><th>Date</th><th>Revision flown</th><th>Validation</th><th>Apogee error</th><th>Prediction basis</th></tr></thead>
+            <tbody>{twin.flights.map((f) => (
+              <tr key={f.flight_id}><td><a href={`#/flights/${f.flight_id}`}>{f.flight_id}</a></td><td>{f.date}</td><td>{f.revision}</td>
+                <td>{f.status ? <StatusPill status={f.status} /> : "not analysed"}</td>
+                <td>{f.apogee_error_pct == null ? "—" : `${f.apogee_error_pct > 0 ? "+" : ""}${fmt(f.apogee_error_pct, 1)} %`}</td>
+                <td className="small">{f.prediction_basis ?? "—"}</td></tr>))}
+            </tbody>
+          </table>
+          {twin.calibrations.map((c) => <div key={c.revision} className="note">{c.revision}: drag ×{fmt(c.cd_scale, 3)} adopted from {c.source_flight} ({c.adopted})</div>)}
+        </Card>
+      )}
 
       <Card title="Components" actions={
         !locked && (
@@ -234,6 +260,33 @@ function Editor({ vehicleId, schema, motors, onSaved }: { vehicleId: string; sch
           })}
         </div>
       </Card>
+
+      {!locked && (
+        <Card title="Add from CAD (STEP / STL)">
+          <div className="note">Exact mass, CG and inertia from the CAD geometry × material density (ESTIMATED until weighed).
+            Set the model axis that points aft and the vehicle station of the model origin.</div>
+          <div className="form grid-form">
+            <NumberField label="Density" unit="kg/m³" value={cad.density} onChange={(v) => setCad({ ...cad, density: v ?? 1240 })} />
+            <SelectField label="Model axis pointing aft" value={cad.axis} onChange={(v) => setCad({ ...cad, axis: v })}
+                         options={["+z", "-z", "+x", "-x", "+y", "-y"]} />
+            <NumberField label="Station of model origin" unit="m" value={cad.station} onChange={(v) => setCad({ ...cad, station: v ?? 0 })} />
+            <NumberField label="Part length (drawing)" unit="m" value={cad.length} onChange={(v) => setCad({ ...cad, length: v ?? 0 })} />
+            <SelectField label="STL units" value={cad.units} onChange={(v) => setCad({ ...cad, units: v })} options={["mm", "m", "cm", "in"]} />
+            <label className="field"><span>CAD file</span>
+              <input type="file" accept=".step,.stp,.stl" onChange={async (e) => {
+                const f = e.target.files?.[0]; if (!f) return;
+                try {
+                  const r = await api.post<{ components: Array<Component & { warnings: string[] }> }>("/api/cad/part", {
+                    name: f.name.replace(/\.[^.]+$/, ""), filename: f.name, b64: await fileToBase64(f), density: cad.density,
+                    axis: cad.axis, nose_station: cad.station, length: cad.length, units: cad.units, merge: true });
+                  update((d) => { for (const c of r.components) { const { warnings: _w, kind: _k, ...comp } = c as Component & { warnings: string[]; kind: string }; d.vehicle.components.push(comp as Component); } });
+                  setMsg(`added ${r.components.map((c) => c.name).join(", ")}${r.components.flatMap((c) => c.warnings).length ? " - " + r.components.flatMap((c) => c.warnings).join("; ") : ""}`);
+                } catch (err) { setError((err as Error).message); }
+                e.target.value = "";
+              }} /></label>
+          </div>
+        </Card>
+      )}
 
       <Card title="Recovery" actions={!locked && (
         <button onClick={() => update((d) => {

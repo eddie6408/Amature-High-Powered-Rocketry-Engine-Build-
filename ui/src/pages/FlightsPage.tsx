@@ -116,6 +116,7 @@ function FlightView({ flightId, onChanged }: { flightId: string; onChanged: () =
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [cal, setCal] = useState<{ proposal: { value: number; note: string } | null; reason: string } | null>(null);
+  const [adopted, setAdopted] = useState<string | null>(null);
   const load = () => api.get<Flight>(`/api/flights/${flightId}`).then((x) => { setF(x); if (!file && x.raw_files.length) setFile(x.analysis?.file ?? x.raw_files[0].name); });
   useEffect(() => { load(); }, [flightId]);
   useEffect(() => {
@@ -230,8 +231,17 @@ function FlightView({ flightId, onChanged }: { flightId: string; onChanged: () =
           <Card title="Possible contributors" actions={<button onClick={calibrate} disabled={busy}>Propose drag calibration</button>}>
             <div className="note">Evidence-based candidates - not causal attributions.</div>
             <ul>{a.contributors.map((c) => <li key={c.name}><strong>{c.name}</strong> — {c.evidence}. <em>Check: {c.suggested_check}</em></li>)}</ul>
-            {cal && (cal.proposal ? <div className="ok-line">Proposed Cd scale {fmt(cal.proposal.value, 3)} (ESTIMATED): {cal.reason}</div>
-              : <div className="warn-line">{cal.reason}</div>)}
+            {cal && (cal.proposal ? (
+              <div className="stack">
+                <div className="ok-line">Proposed Cd scale {fmt(cal.proposal.value, 3)} (ESTIMATED): {cal.reason}</div>
+                {adopted ? <div className="ok-line">Adopted as {adopted} - the flown revision stays locked; new simulations use the calibrated twin.</div> : (
+                  <div><button className="primary" onClick={async () => {
+                    if (!window.confirm(`Create a new revision of ${f.vehicle_id} with drag ×${cal.proposal!.value.toFixed(3)} from ${f.flight_id}?`)) return;
+                    try { const r = await api.post<{ revision: string }>(`/api/flights/${flightId}/adopt`, { cd_scale: cal.proposal!.value, note: "adopted after engineering review" }); setAdopted(r.revision); }
+                    catch (e) { setErr((e as Error).message); }
+                  }}>Adopt as new revision</button> <span className="muted">only after reviewing the other possible contributors</span></div>
+                )}
+              </div>) : <div className="warn-line">{cal.reason}</div>)}
             {a.notes.map((n) => <div key={n} className="note">{n}</div>)}
           </Card>
         </>

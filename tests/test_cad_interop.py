@@ -118,7 +118,7 @@ def test_openrocket_import(tmp_path):
         dev = {d.name: d for d in r.recovery.devices}
         assert dev["Main"].deploy_event == "altitude" and dev["Main"].deploy_altitude_agl == 150
         assert dev["Drogue"].delay == 1.0
-        assert any("freeformfinset" in w for w in r.warnings)
+        assert any("freeform fin without points; skipped" in w for w in r.warnings)
         assert any("MEASURED" in w for w in r.warnings)
         assert r.vehicle.validate() == []
     # the imported design flies in the 6-DOF simulator

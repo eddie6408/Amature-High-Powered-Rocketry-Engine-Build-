@@ -9,8 +9,9 @@ and turns them into :class:`CadPart` components for the vehicle model.
 """
 
 from aerodyne.cad.mass_import import read_mass_properties_csv
+from aerodyne.cad.step import step_parts
 from aerodyne.cad.stl import CadMassProperties, MeshMassProperties, mesh_mass_properties, read_stl
 from aerodyne.vehicle.components import CadPart
 
 __all__ = ["CadMassProperties", "CadPart", "MeshMassProperties", "mesh_mass_properties",
-           "read_mass_properties_csv", "read_stl"]
+           "read_mass_properties_csv", "read_stl", "step_parts"]

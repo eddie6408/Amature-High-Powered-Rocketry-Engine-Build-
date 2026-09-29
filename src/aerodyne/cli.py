@@ -232,6 +232,15 @@ def cmd_app(args) -> int:
     return 0
 
 
+def cmd_validate_ork(args) -> int:
+    from aerodyne.interop.ork_validate import render, validate
+
+    for f in args.files:
+        print(render(validate(f, args.mach)))
+        print()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="aerodyne", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -293,6 +302,10 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8765)
     s.set_defaults(fn=cmd_app)
+    s = sub.add_parser("validate-ork", help="compare an OpenRocket design with OpenRocket's own numbers")
+    s.add_argument("files", nargs="+")
+    s.add_argument("--mach", type=float, default=0.3)
+    s.set_defaults(fn=cmd_validate_ork)
     args = p.parse_args(argv)
     return args.fn(args)
 

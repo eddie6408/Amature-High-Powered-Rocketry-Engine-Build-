@@ -56,6 +56,14 @@ COMPONENTS = {
         {"name": "length_", "label": "Length", "type": _N, "unit": "m"},
         {"name": "radius", "label": "Radius", "type": _N, "unit": "m"},
         {"name": "tags", "label": "Tags (payload, recovery, avionics)", "type": "tags"}]},
+    "CadPart": {"label": "CAD part (STEP/STL)", "fields": [
+        {"name": "cad_mass", "label": "CAD mass", "type": _N, "unit": "kg"},
+        {"name": "cad_cg", "label": "CAD CG station", "type": _N, "unit": "m"},
+        {"name": "cad_ixx", "label": "Roll inertia", "type": _N, "unit": "kg·m²"},
+        {"name": "cad_iyy", "label": "Pitch inertia", "type": _N, "unit": "kg·m²"},
+        {"name": "length_", "label": "Length", "type": _N, "unit": "m"},
+        {"name": "source", "label": "Source file", "type": "text"},
+        {"name": "tags", "label": "Tags", "type": "tags"}]},
     "MotorSlot": {"label": "Motor slot", "fields": [
         {"name": "motor_length", "label": "Motor length", "type": _N, "unit": "m"},
         {"name": "motor_diameter", "label": "Motor diameter", "type": _N, "unit": "m"}]},
@@ -83,6 +91,8 @@ DEFAULTS = {
     "Bulkhead": {"name": "Bulkhead", "diameter": 0.063, "thickness": 0.006, "material": "birch_plywood"},
     "PointMass": {"name": "Mass item", "mass_estimate": 0.1, "length_": 0.1, "radius": 0.02, "tags": []},
     "MotorSlot": {"name": "motor", "motor_length": 0.25, "motor_diameter": 0.038},
+    "CadPart": {"name": "CAD part", "cad_mass": 0.1, "cad_cg": 0.5, "cad_ixx": 0.0, "cad_iyy": 0.0,
+                "length_": 0.1, "source": "", "tags": []},
 }
 
 

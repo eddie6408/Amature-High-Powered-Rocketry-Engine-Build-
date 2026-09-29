@@ -99,7 +99,8 @@ def analyze_design(ws: Workspace, payload: dict, motor_key: str | None = None) -
         elif out["margins_cal"].get("FULL", 0) < 1.0:
             out["warnings"].append("static margin with motor loaded is below 1 caliber")
         aero = AnalyticalAeroModel(v)
-        out["cd0_curve"] = [{"mach": m, "cd": aero.zero_lift_cd(m, 6e6)} for m in
+        out["calibration"] = d.calibration or None
+        out["cd0_curve"] = [{"mach": m, "cd": d.cd_scale * aero.zero_lift_cd(m, 6e6)} for m in
                             np.round(np.linspace(0.1, 2.0, 20), 2)]
     except ValueError as exc:
         out["warnings"].append(str(exc))
@@ -184,6 +185,14 @@ def import_motor(ws: Workspace, text: str, quality: str, source: str, source_dat
 
 
 # ------------------------------------------------------------------------------- missions
+def aero_for(design: Design):
+    """Aero model of a design, including an adopted flight calibration."""
+    from aerodyne.aero.model import ScaledAeroModel
+
+    base = AnalyticalAeroModel(design.vehicle)
+    return ScaledAeroModel(base, cd_scale=design.cd_scale) if design.cd_scale != 1.0 else base
+
+
 def mission_hashes(ws: Workspace, m: Mission) -> dict[str, str]:
     return {"design": ws.registry.get(m.vehicle_id).revision(m.revision).config_hash,
             "motor": ws.motor(m.motor_key).data_hash,
@@ -193,7 +202,7 @@ def mission_hashes(ws: Workspace, m: Mission) -> dict[str, str]:
 def build_config(ws: Workspace, m: Mission, **kw: Any) -> tuple[SimulationConfig, Design]:
     d = ws.design(m.vehicle_id, m.revision)
     cfg = SimulationConfig(vehicle=d.vehicle, motor=ws.motor(m.motor_key),
-                           aero=AnalyticalAeroModel(d.vehicle), atmosphere=m.atmosphere_model(),
+                           aero=aero_for(d), atmosphere=m.atmosphere_model(),
                            wind=m.wind_model(), site=m.launch_site(), recovery=d.recovery, **kw)
     return cfg, d
 
@@ -320,8 +329,10 @@ def flight_config(ws: Workspace, rec: dict) -> tuple[SimulationConfig, Design, s
         m = ws.mission(rec["mission_id"])
         kw = {"atmosphere": m.atmosphere_model(), "wind": m.wind_model(), "site": m.launch_site()}
         basis = f"mission '{m.name}' environment"
-    cfg = SimulationConfig(vehicle=d.vehicle, motor=motor, aero=AnalyticalAeroModel(d.vehicle),
+    cfg = SimulationConfig(vehicle=d.vehicle, motor=motor, aero=aero_for(d),
                            recovery=d.recovery, **kw)
+    if d.cd_scale != 1.0:
+        basis += f"; drag calibrated x{d.cd_scale:.3f} from {d.calibration.get('source_flight', '?')}"
     return cfg, d, basis
 
 
@@ -419,6 +430,84 @@ def propose_calibration(ws: Workspace, flight_id: str) -> dict:
             "contributors": an.get("contributors", []),
             "reason": "matches the measured apogee by scaling drag alone; other contributors listed "
                       "may explain the difference instead - review before adopting"}
+
+
+def adopt_calibration(ws: Workspace, flight_id: str, cd_scale: float, note: str = "",
+                      author: str = "unknown") -> dict:
+    """Close the loop (spec 49): the flown revision stays locked; the calibrated twin
+    becomes a NEW revision of the vehicle, with provenance, used by later simulations."""
+    from datetime import datetime, timezone
+
+    if not 0.3 <= cd_scale <= 3.0:
+        raise BadRequest("drag scale must be between 0.3 and 3.0")
+    rec = ws.flight(flight_id)
+    an = ws.flight_analysis(flight_id)
+    if not an:
+        raise BadRequest("analyse the flight before adopting a calibration")
+    latest = ws.vehicle_summary(rec["vehicle_id"])["revisions"][-1]["label"]
+    d = ws.design(rec["vehicle_id"], latest)
+    prev = d.cd_scale
+    d.calibration = {"cd_scale": round(cd_scale, 4), "source_flight": flight_id,
+                     "source_revision": rec["revision"], "method": "apogee match (drag scale only)",
+                     "measured_apogee_agl_m": (an.get("actual") or {}).get("apogee_agl_m"),
+                     "kind": "ESTIMATED", "adopted": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                     "previous_cd_scale": prev, "note": note}
+    out = ws.revise(rec["vehicle_id"], d, f"drag calibration x{cd_scale:.3f} from flight {flight_id}"
+                    + (f": {note}" if note else ""), author=author)
+    return {"vehicle_id": rec["vehicle_id"], "revision": out["revision"], "calibration": d.calibration}
+
+
+def twin_history(ws: Workspace, vehicle_id: str) -> dict:
+    """Every flight of a vehicle with its validation status and any calibration adopted."""
+    flights = [f for f in ws.list_flights() if f["vehicle_id"] == vehicle_id]
+    rows = []
+    for f in flights:
+        an = ws.flight_analysis(f["flight_id"]) or {}
+        apo = next((r for r in an.get("comparison", []) if r["key"] == "apogee_agl_m"), None)
+        rows.append({"flight_id": f["flight_id"], "date": f.get("date"), "revision": f["revision"],
+                     "status": an.get("status"), "apogee_error_pct": apo and apo["pct_error"],
+                     "prediction_basis": an.get("prediction_basis")})
+    cals = []
+    for r in ws.vehicle_summary(vehicle_id)["revisions"]:
+        c = ws.design(vehicle_id, r["label"]).calibration
+        if c:
+            cals.append({"revision": r["label"], **c})
+    return {"flights": rows, "calibrations": cals}
+
+
+def cad_part(data: dict) -> dict:
+    """Mass properties of an uploaded STEP or STL file -> CadPart component dicts."""
+    import tempfile
+    from pathlib import Path
+
+    from aerodyne.cad.stl import stl_part
+    from aerodyne.cad.step import step_parts
+
+    name = data.get("name") or "part"
+    suffix = Path(data.get("filename", name)).suffix.lower()
+    density = float(data["density"])
+    axis = data.get("axis", "+z")
+    station = float(data.get("nose_station", 0.0))
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / f"upload{suffix}"
+        p.write_bytes(base64.b64decode(data["b64"]))
+        try:
+            if suffix in (".step", ".stp"):
+                parts = step_parts(p, density, axis, station, name, merge=bool(data.get("merge", True)))
+            elif suffix == ".stl":
+                parts = [stl_part(p, density, name, data.get("units", "mm"), axis, station)]
+            else:
+                raise BadRequest("CAD file must be .step, .stp or .stl")
+        except (RuntimeError, ValueError) as exc:
+            raise BadRequest(str(exc)) from exc
+    comps = []
+    for cp in parts:
+        c = cp.to_component(length=float(data.get("length", 0.0)))
+        c.source = data.get("filename", c.source)
+        d = {f: getattr(c, f) for f in ("name", "x", "cad_mass", "cad_cg", "cad_ixx", "cad_iyy",
+                                        "length_", "source", "source_sha256", "mass_override", "cg_override")}
+        comps.append({"type": "CadPart", **d, "tags": [], "warnings": list(cp.warnings), "kind": cp.kind.value})
+    return {"components": _clean(comps)}
 
 
 # ----------------------------------------------------------------------------------- jobs

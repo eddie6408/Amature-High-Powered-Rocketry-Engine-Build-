@@ -97,8 +97,9 @@ curve. It shows how the tools fit together; it is not a flight-ready design.
 | Generic test-stand data (raw/filtered/derived/uncertainty/plots) | `aerodyne.analysis.test_data` | ✅ |
 | Digital twin + post-flight validation + calibration proposals | `aerodyne.twin` | ✅ |
 | Reporting (Markdown) | `aerodyne.reporting` | ✅ |
-| CAD integration: STL mesh mass properties, Fusion/SolidWorks/FreeCAD mass-property CSV | `aerodyne.cad` | ✅ STEP not yet (needs OpenCASCADE) |
-| OpenRocket `.ork` design import | `aerodyne.interop.openrocket` | ✅ tested against a hand-written fixture in the documented format; freeform fins/pods not supported (reported, never dropped silently) |
+| CAD integration: STEP (exact B-rep via OpenCASCADE/gmsh), STL, Fusion/SolidWorks/FreeCAD mass-property CSV; upload in the designer | `aerodyne.cad` | ✅ STEP needs `pip install ".[cad]"` |
+| OpenRocket `.ork` import + cross-validation against OpenRocket's own stored mass/CG/CP/Cd (`aerodyne validate-ork`) | `aerodyne.interop` | ✅ all 22 example files from the OpenRocket repository import; pods, tube fins and parallel stages reported as unsupported |
+| Digital-twin loop: flight → calibration proposal → adopted as a new revision used by later simulations, with history | `aerodyne.app.services`, Design/Analyse pages | ✅ |
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for interfaces and data flow and
 [`docs/FIRMWARE.md`](docs/FIRMWARE.md) for the flight-computer design.

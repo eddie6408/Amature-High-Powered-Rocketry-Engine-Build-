@@ -21,6 +21,13 @@ class Design:
     recovery: RecoveryConfig | None = None
     avionics: AvionicsConfig = field(default_factory=AvionicsConfig)
     notes: str = ""
+    # model calibration adopted from flight data (spec 49): e.g. {"cd_scale": 1.12,
+    # "source_flight": "F-001", "method": "...", "kind": "ESTIMATED", "adopted": "..."}
+    calibration: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def cd_scale(self) -> float:
+        return float(self.calibration.get("cd_scale", 1.0))
 
 
 def recovery_to_dict(rc: RecoveryConfig | None) -> dict[str, Any] | None:
@@ -41,7 +48,7 @@ def design_to_payload(d: Design) -> dict[str, Any]:
     av = dataclasses.asdict(d.avionics)
     av["sensors"] = list(av["sensors"])
     return {"vehicle": d.vehicle.to_dict(), "recovery": recovery_to_dict(d.recovery),
-            "avionics": av, "notes": d.notes}
+            "avionics": av, "notes": d.notes, "calibration": dict(d.calibration)}
 
 
 def design_from_payload(p: dict[str, Any]) -> Design:
@@ -49,4 +56,5 @@ def design_from_payload(p: dict[str, Any]) -> Design:
     if "sensors" in av:
         av["sensors"] = tuple(av["sensors"])
     return Design(vehicle=Vehicle.from_dict(p["vehicle"]), recovery=recovery_from_dict(p.get("recovery")),
-                  avionics=AvionicsConfig(**av), notes=p.get("notes", ""))
+                  avionics=AvionicsConfig(**av), notes=p.get("notes", ""),
+                  calibration=dict(p.get("calibration") or {}))

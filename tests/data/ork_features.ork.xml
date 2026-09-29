@@ -1,0 +1,39 @@
+<?xml version='1.0' encoding='utf-8'?>
+<!-- Hand-written fixture covering OpenRocket features found in real files: a weighed stage
+     (override incl. subcomponents), solid ('filled') nose cone with shoulder, freeform and
+     elliptical fins, fin tabs, auto-radius centering rings, engine block, launch lug. -->
+<openrocket version="1.9" creator="OpenRocket 23.09">
+  <rocket><name>Features</name><subcomponents>
+    <stage><name>Sustainer</name><overridemass>1.0</overridemass><overridesubcomponentsmass>true</overridesubcomponentsmass>
+      <subcomponents>
+        <nosecone><name>Nose</name><material type="bulk" density="1240">PLA</material><length>0.2</length>
+          <thickness>filled</thickness><shape>ogive</shape><aftradius>0.03</aftradius>
+          <aftshoulderradius>0.029</aftshoulderradius><aftshoulderlength>0.05</aftshoulderlength>
+          <aftshoulderthickness>0.002</aftshoulderthickness><aftshouldercapped>true</aftshouldercapped></nosecone>
+        <bodytube><name>Airframe</name><material type="bulk" density="1850">Fiberglass</material><length>0.8</length>
+          <thickness>0.0015</thickness><radius>0.03</radius>
+          <subcomponents>
+            <innertube><name>Mount</name><position type="bottom">0.0</position><material type="bulk" density="680">Cardboard</material>
+              <length>0.25</length><outerradius>0.0145</outerradius><thickness>0.0008</thickness>
+              <subcomponents><engineblock><name>Block</name><position type="top">0.0</position>
+                <material type="bulk" density="680">Cardboard</material><length>0.01</length><outerradius>auto</outerradius>
+                <thickness>0.003</thickness></engineblock></subcomponents></innertube>
+            <centeringring><name>Ring</name><position type="bottom">-0.2</position><material type="bulk" density="630">Birch</material>
+              <length>0.006</length><outerradius>auto</outerradius><innerradius>auto</innerradius></centeringring>
+            <freeformfinset><name>Freeform</name><position type="bottom">0.0</position><material type="bulk" density="1800">G10</material>
+              <fincount>3</fincount><thickness>0.003</thickness><tabheight>0.01</tabheight><tablength>0.08</tablength>
+              <finpoints><point x="0" y="0"/><point x="0.06" y="0.07"/><point x="0.12" y="0.07"/><point x="0.14" y="0"/></finpoints>
+            </freeformfinset>
+            <ellipticalfinset><name>Canards</name><position type="top">0.1</position><material type="bulk" density="1800">G10</material>
+              <fincount>4</fincount><thickness>0.002</thickness><rootchord>0.04</rootchord><height>0.02</height></ellipticalfinset>
+            <launchlug><name>Lug</name><position type="middle">0.0</position><material type="bulk" density="1050">ABS</material>
+              <radius>0.005</radius><thickness>0.001</thickness><length>0.05</length></launchlug>
+          </subcomponents></bodytube>
+      </subcomponents></stage>
+  </subcomponents></rocket>
+  <simulations><simulation status="loaded"><name>Sim A</name><flightdata>
+    <databranch name="Sim A" types="Time,Mass,Motor mass,CG location,CP location,Mach number">
+      <datapoint>0,1.2,0.2,0.62,NaN,0</datapoint><datapoint>0.1,1.19,0.19,0.62,0.83,0.1</datapoint>
+      <datapoint>0.2,1.18,0.18,0.62,0.84,0.3</datapoint><datapoint>0.3,1.17,0.17,0.62,0.84,0.2</datapoint>
+    </databranch></flightdata></simulation></simulations>
+</openrocket>

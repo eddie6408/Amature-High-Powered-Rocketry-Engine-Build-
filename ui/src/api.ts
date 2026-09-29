@@ -54,6 +54,7 @@ export interface DesignPayload {
   recovery: { body_cd_area: number; devices: Record<string, unknown>[] } | null;
   avionics: Record<string, unknown>;
   notes: string;
+  calibration?: Record<string, unknown>;
 }
 export interface Motor { key: string; designation: string; manufacturer: string; classification: string;
   total_impulse_Ns: number; burn_time_s: number; average_thrust_N: number; peak_thrust_N: number;

@@ -79,6 +79,10 @@ class App:
             ws_, fid, b["file"], b.get("mapping", {})))
         r("GET", r"/api/flights/(?P<fid>[^/]+)/report", lambda q, b, fid: {"markdown": flight_report(
             ws_.flight(fid), ws_.flight_analysis(fid))})
+        r("POST", r"/api/flights/(?P<fid>[^/]+)/adopt", lambda q, b, fid: svc.adopt_calibration(
+            ws_, fid, float(b["cd_scale"]), b.get("note", ""), b.get("author", "unknown")))
+        r("GET", r"/api/vehicles/(?P<vid>[^/]+)/twin", lambda q, b, vid: svc.twin_history(ws_, vid))
+        r("POST", r"/api/cad/part", lambda q, b: svc.cad_part(b))
         r("POST", r"/api/flights/(?P<fid>[^/]+)/calibrate", lambda q, b, fid: svc.propose_calibration(ws_, fid))
         # ground station
         r("GET", r"/api/ground/status", lambda q, b: self.ground.status())

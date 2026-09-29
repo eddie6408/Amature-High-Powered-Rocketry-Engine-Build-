@@ -37,8 +37,9 @@ from aerodyne.vehicle.vehicle import Vehicle
 _SHAPES = {"ogive": "ogive", "conical": "conical", "parabolic": "parabolic", "haack": "haack",
            "ellipsoid": "elliptical", "power": "parabolic"}
 _MASS_ONLY = {"masscomponent", "shockcord", "streamer", "launchlug", "railbutton",
-              "centeringring", "tubecoupler", "parachute", "bulkhead", "innertube"}
-_SUPPORTED = {"nosecone", "bodytube", "transition", "trapezoidfinset", "stage", *_MASS_ONLY}
+              "centeringring", "tubecoupler", "parachute", "bulkhead", "innertube", "engineblock"}
+_FINS = {"trapezoidfinset", "freeformfinset", "ellipticalfinset"}
+_SUPPORTED = {"nosecone", "bodytube", "transition", "stage", *_FINS, *_MASS_ONLY}
 
 
 @dataclass
@@ -80,6 +81,34 @@ def _f(el: ET.Element, tag: str, default: float | None = None) -> float | None:
     return float(t.split()[-1]) if t.startswith("auto") else float(t)
 
 
+def _thickness(el: ET.Element, radius: float, default: float) -> float:
+    """Wall thickness; OpenRocket writes 'filled' for solid parts."""
+    x = el.find("thickness")
+    if x is not None and x.text and x.text.strip() == "filled":
+        return radius if radius == radius and radius > 0 else default
+    return _f(el, "thickness", default) or default
+
+
+def _equivalent_trapezoid(el: ET.Element) -> tuple[float, float, float, float, str]:
+    """(root, tip, span, sweep, note) of a trapezoid with the same root chord, span and
+    planform area as an elliptical or freeform fin - an APPROXIMATION for Barrowman."""
+    if el.tag == "ellipticalfinset":
+        a, s = _f(el, "rootchord", 0.0) or 0.0, _f(el, "height", 0.0) or 0.0
+        b = (math.pi / 2 - 1) * a                     # equal area: pi/4 a s = (a+b)/2 s
+        return a, b, s, (a - b) / 2, "elliptical fins approximated by an equal-area trapezoid"
+    pts = [(float(p.get("x", 0)), float(p.get("y", 0))) for p in el.findall("./finpoints/point")]
+    if len(pts) < 3:
+        return 0.0, 0.0, 0.0, 0.0, "freeform fin without points"
+    xs = [p[0] for p in pts]
+    s = max(p[1] for p in pts)
+    area = 0.5 * abs(sum(x1 * y2 - x2 * y1 for (x1, y1), (x2, y2) in zip(pts, pts[1:] + pts[:1])))
+    root = max(xs) - min(xs)
+    tip_pts = [p for p in pts if p[1] >= 0.9 * s] or pts
+    sweep = min(p[0] for p in tip_pts) - min(xs)
+    tip = max(0.0, 2 * area / s - root) if s > 0 else 0.0
+    return root, tip, s, sweep, "freeform fins approximated by an equal-area trapezoid"
+
+
 def _auto(el: ET.Element, tag: str) -> bool:
     x = el.find(tag)
     return x is not None and x.text is not None and x.text.strip().startswith("auto")
@@ -111,6 +140,9 @@ class _Builder:
         self.pending_auto: list[tuple[object, str]] = []
         self.stack: list[tuple[float, float, float]] = []   # (fore x, aft x, aft radius or nan)
         self.tubes: list[tuple[BodyTube, ET.Element]] = []  # children resolved after auto radii
+        self.owner: dict[int, ET.Element] = {}              # id(component) -> XML element
+        self.auto_rings: list[tuple[PointMass, float, float, float]] = []   # ring, ro, length, density
+        self.subtree_overrides: list[ET.Element] = []
 
     # ---- placement -----------------------------------------------------------
     @staticmethod
@@ -126,6 +158,11 @@ class _Builder:
         return after + off   # "after"
 
     # ---- traversal -------------------------------------------------------------
+    def _add(self, comp, el: ET.Element):
+        self.v.add(comp)
+        self.owner[id(comp)] = el
+        return comp
+
     def build(self, root: ET.Element) -> None:
         rocket = root.find("rocket")
         if rocket is None:
@@ -136,6 +173,8 @@ class _Builder:
         if len(stages) > 1:
             self.warnings.append(f"{len(stages)} stages: imported as one stack; staging not modelled")
         for st in stages:
+            if self._covers_subcomponents(st) and _f(st, "overridemass") is not None:
+                self.subtree_overrides.append(st)
             x = self._children(st, fore=x, length=0.0, radius=math.nan, top_level=True)
         self._resolve_auto()
         # body-tube children need the resolved radius (fins, rings with 'auto' radii)
@@ -143,6 +182,43 @@ class _Builder:
             ro = tube.outer_diameter / 2
             self._children(el, tube.x, tube.length_, ro, airframe_ri=ro - tube.wall_thickness)
         self._resolve_auto()
+        self._resolve_rings()
+        self._apply_subtree_overrides(root)
+
+    def _resolve_rings(self) -> None:
+        """'auto' inner radius of a centering ring = outer radius of the inner tube it surrounds."""
+        tubes = [c for c in self.v.components if isinstance(c, BodyTube) and "internal" in c.tags]
+        for ring, ro, length, dens in self.auto_rings:
+            around = [t.outer_diameter / 2 for t in tubes
+                      if t.x - 1e-6 <= ring.x <= t.x + t.length_ + 1e-6 and t.outer_diameter / 2 < ro]
+            ri = max(around, default=0.0)
+            ring.mass_estimate = math.pi * (ro * ro - ri * ri) * length * dens
+
+    def _apply_subtree_overrides(self, root: ET.Element) -> None:
+        """OpenRocket overrides that include subcomponents (e.g. a weighed stage): scale the
+        subtree so its total equals the weighed mass. The subtree CG is unchanged."""
+        parent = {c: p for p in root.iter() for c in p}
+
+        def under(el: ET.Element, anc: ET.Element) -> bool:
+            while el is not None:
+                if el is anc:
+                    return True
+                el = parent.get(el)
+            return False
+
+        for el in self.subtree_overrides:
+            target = _f(el, "overridemass")
+            comps = [c for c in self.v.components
+                     if c is not self.v.motor_slot and id(c) in self.owner and under(self.owner[id(c)], el)]
+            total = sum(c.mass for c in comps)
+            if not comps or total <= 0 or target is None:
+                continue
+            k = target / total
+            for c in comps:
+                c.mass_override = c.mass * k
+            self.warnings.append(
+                f"'{(el.findtext('name') or el.tag).strip()}': weighed total {target:.4f} kg applied to "
+                f"{len(comps)} parts (scaled x{k:.3f}); only the total was measured")
 
     def _children(self, parent: ET.Element, fore: float, length: float, radius: float,
                   top_level: bool = False, airframe_ri: float = math.nan) -> float:
@@ -156,6 +232,8 @@ class _Builder:
                 self.warnings.append(f"unsupported component <{tag}> '{el.findtext('name')}' skipped")
                 continue
             if tag == "stage":
+                if self._covers_subcomponents(el) and _f(el, "overridemass") is not None:
+                    self.subtree_overrides.append(el)
                 after = self._children(el, after, 0.0, radius, top_level=True)
                 continue
             method, off = _placement(el)
@@ -172,19 +250,26 @@ class _Builder:
     def _length(el: ET.Element) -> float:
         if el.tag == "trapezoidfinset":
             return _f(el, "rootchord", 0.0)
+        if el.tag in ("freeformfinset", "ellipticalfinset"):
+            return _equivalent_trapezoid(el)[0]
         if el.tag == "bulkhead":
             return _f(el, "length", _f(el, "thickness", 0.0))
         return _f(el, "length", 0.0) or 0.0
 
+    @staticmethod
+    def _covers_subcomponents(el: ET.Element) -> bool:
+        return any((el.findtext(t) or "").strip() == "true"
+                   for t in ("overridesubcomponentsmass", "overridesubcomponents"))
+
     def _override(self, comp, el: ET.Element) -> None:
         m = _f(el, "overridemass")
         if m is not None:
-            comp.mass_override = m
-            self.warnings.append(f"'{comp.name}': OpenRocket mass override {m:.4f} kg imported as "
-                                 "MEASURED - confirm it was weighed")
-            if (el.findtext("overridesubcomponentsmass") or "").strip() == "true":
-                self.warnings.append(f"'{comp.name}': override includes subcomponents in OpenRocket; "
-                                     "AERODYNE adds child masses separately - check totals")
+            if self._covers_subcomponents(el):
+                self.subtree_overrides.append(el)       # applied after the subtree is built
+            else:
+                comp.mass_override = m
+                self.warnings.append(f"'{comp.name}': OpenRocket mass override {m:.4f} kg imported as "
+                                     "MEASURED - confirm it was weighed")
         cg = _f(el, "overridecg")
         if cg is not None:
             comp.cg_override = comp.x + cg
@@ -200,11 +285,12 @@ class _Builder:
             if (el.findtext("shape") or "").strip() == "haack" and (_f(el, "shapeparameter", 0) or 0) > 0.2:
                 self.warnings.append(f"'{name}': LV-Haack treated as Von Karman for CP")
             c = NoseCone(name, x=x, length_=length, diameter=2 * r if r == r else 0.0, shape=shape,
-                         wall_thickness=_f(el, "thickness", 0.002), material=mat or "fiberglass")
+                         wall_thickness=_thickness(el, r, 0.002), material=mat or "fiberglass")
             if _auto(el, "aftradius") or r != r:
                 self.pending_auto.append((c, "diameter"))
             self._override(c, el)
-            self.v.add(c)
+            self._add(c, el)
+            self._shoulder(el, "aft", x + length, name, mat)
             self.stack.append((x, x + length, r))
             self._children(el, x, length, r)
         elif tag == "bodytube":
@@ -214,59 +300,74 @@ class _Builder:
             if _auto(el, "radius") or r != r:
                 self.pending_auto.append((c, "outer_diameter"))
             self._override(c, el)
-            self.v.add(c)
+            self._add(c, el)
             self.stack.append((x, x + length, r))
             self.tubes.append((c, el))
         elif tag == "transition":
             r1, r2 = _f(el, "foreradius", math.nan), _f(el, "aftradius", math.nan)
             c = Transition(name, x=x, length_=length, fore_diameter=2 * r1 if r1 == r1 else 0.0,
                            aft_diameter=2 * r2 if r2 == r2 else 0.0,
-                           wall_thickness=_f(el, "thickness", 0.002), material=mat or "fiberglass")
+                           wall_thickness=_thickness(el, max(r1, r2) if r1 == r1 else r2, 0.002),
+                           material=mat or "fiberglass")
             if _auto(el, "foreradius") or r1 != r1:
                 self.pending_auto.append((c, "fore_diameter"))
             if _auto(el, "aftradius") or r2 != r2:
                 self.pending_auto.append((c, "aft_diameter"))
             self._override(c, el)
-            self.v.add(c)
+            self._add(c, el)
+            self._shoulder(el, "fore", x, name, mat)
+            self._shoulder(el, "aft", x + length, name, mat)
             self.stack.append((x, x + length, r2))
             self._children(el, x, length, r2)
-        elif tag == "trapezoidfinset":
+        elif tag in _FINS:
             if (_f(el, "cant", 0) or 0) != 0:
                 self.warnings.append(f"'{name}': fin cant not modelled")
-            c = FinSet(name, x=x, count=int(_f(el, "fincount", 3)), root_chord=length,
-                       tip_chord=_f(el, "tipchord", 0.0), span=_f(el, "height", 0.0),
-                       sweep=_f(el, "sweeplength", 0.0), thickness=_f(el, "thickness", 0.003),
+            if tag == "trapezoidfinset":
+                root, tip, span, sweep = length, _f(el, "tipchord", 0.0), _f(el, "height", 0.0), \
+                    _f(el, "sweeplength", 0.0)
+            else:
+                root, tip, span, sweep, note = _equivalent_trapezoid(el)
+                if root <= 0 or span <= 0:
+                    self.warnings.append(f"'{name}': {note}; skipped")
+                    return
+                self.warnings.append(f"'{name}': {note} (ESTIMATED)")
+            c = FinSet(name, x=x, count=int(_f(el, "fincount", 3)), root_chord=root,
+                       tip_chord=tip, span=span,
+                       sweep=sweep, thickness=_f(el, "thickness", 0.003),
                        body_radius=parent_r if parent_r == parent_r else 0.0,
                        material=mat or "g10")
             if parent_r != parent_r:
                 self.pending_auto.append((c, "body_radius"))
             self._override(c, el)
-            self.v.add(c)
+            self._add(c, el)
+            self._fin_extras(el, c, mat)
         elif tag == "innertube":
             ro = _f(el, "outerradius", 0.0)
             c = BodyTube(name, x=x, length_=length, outer_diameter=2 * ro,
                          wall_thickness=_f(el, "thickness", 0.0005), material=mat or "cardboard",
                          tags={"internal"})
             self._override(c, el)
-            self.v.add(c)
+            self._add(c, el)
             mm = el.find("motormount")
             if mm is not None:
                 self._motor_mount(mm, x, length, 2 * ro)
             self._children(el, x, length, ro, airframe_ri=airframe_ri)
-        elif tag in ("bulkhead", "centeringring", "tubecoupler"):
+        elif tag in ("bulkhead", "centeringring", "tubecoupler", "engineblock"):
             # 'auto' outer radius = inside of the enclosing airframe; 'auto' inner radius
             # of a centering ring = outside of the tube it sits on
             ro = _f(el, "outerradius", airframe_ri if airframe_ri == airframe_ri else parent_r)
             ro = ro if ro == ro else 0.0
             ri = _f(el, "innerradius", parent_r if tag == "centeringring" and parent_r == parent_r
                     and parent_r < ro else 0.0) or 0.0
-            if tag == "tubecoupler":
+            if tag in ("tubecoupler", "engineblock"):
                 ri = ro - (_f(el, "thickness", 0.001) or 0.001)
             dens = mat.density if mat else 630.0
             mass = math.pi * (ro * ro - ri * ri) * length * dens
             c = PointMass(name, x=x, mass_estimate=mass, length_=length, radius=ro)
+            if tag == "centeringring" and _auto(el, "innerradius"):
+                self.auto_rings.append((c, ro, length, dens))
             self._override(c, el)
-            self.v.add(c)
+            self._add(c, el)
             self._children(el, x, length, ro, airframe_ri=airframe_ri)
         elif tag in ("masscomponent", "shockcord", "streamer", "parachute", "launchlug", "railbutton"):
             mass = _f(el, "mass")
@@ -276,11 +377,36 @@ class _Builder:
             tags = {"recovery"} if tag in ("parachute", "streamer", "shockcord") else set()
             c = PointMass(name, x=x, mass_estimate=mass, length_=length, radius=rad, tags=tags)
             self._override(c, el)
-            self.v.add(c)
+            self._add(c, el)
             if tag == "parachute":
                 self._parachute(el, name)
             elif tag == "launchlug":
                 self.v.launch_lug_drag_area += math.pi * rad * rad
+
+    def _shoulder(self, el: ET.Element, side: str, x_joint: float, name: str, mat: Material | None) -> None:
+        L = _f(el, f"{side}shoulderlength", 0.0) or 0.0
+        r = _f(el, f"{side}shoulderradius", 0.0) or 0.0
+        t = _f(el, f"{side}shoulderthickness", 0.0) or 0.0
+        if L <= 0 or r <= 0 or mat is None:
+            return
+        m = math.pi * (r * r - max(r - t, 0.0) ** 2) * L * mat.density
+        if (el.findtext(f"{side}shouldercapped") or "").strip() == "true":
+            m += math.pi * r * r * t * mat.density
+        x0 = x_joint if side == "aft" else x_joint - L
+        self._add(PointMass(f"{name} {side} shoulder", x=x0, mass_estimate=m, length_=L, radius=r), el)
+
+    def _fin_extras(self, el: ET.Element, fins: FinSet, mat: Material | None) -> None:
+        """Fin tabs and root fillets (OpenRocket includes both in the fin-set mass)."""
+        n = fins.count
+        th, tl = _f(el, "tabheight", 0.0) or 0.0, _f(el, "tablength", 0.0) or 0.0
+        m = n * th * tl * fins.thickness * (mat.density if mat else 0.0)
+        fr = _f(el, "filletradius", 0.0) or 0.0
+        fm = el.find("filletmaterial")
+        if fr > 0 and fm is not None:
+            m += n * 2 * (1 - math.pi / 4) * fr * fr * fins.root_chord * float(fm.get("density", "0"))
+        if m > 0:
+            self._add(PointMass(f"{fins.name} tabs/fillets", x=fins.x, mass_estimate=m,
+                                length_=fins.root_chord, radius=fins.body_radius), el)
 
     def _surface_mass(self, el: ET.Element, mat: Material | None) -> float:
         if el.tag == "parachute" and mat is not None:
@@ -293,6 +419,13 @@ class _Builder:
             return m
         if el.tag == "shockcord" and mat is not None:
             return (_f(el, "cordlength", 0.0) or 0.0) * mat.density
+        if el.tag == "launchlug" and mat is not None:
+            r, t, L = _f(el, "radius", 0.0) or 0.0, _f(el, "thickness", 0.0) or 0.0, _f(el, "length", 0.0) or 0.0
+            return math.pi * (r * r - max(r - t, 0.0) ** 2) * L * mat.density
+        if el.tag == "railbutton" and mat is not None:
+            od, h = _f(el, "outerdiameter", 0.0) or 0.0, _f(el, "height", 0.0) or 0.0
+            n = int(_f(el, "instancecount", 1) or 1)
+            return n * math.pi * (od / 2) ** 2 * h * mat.density
         self.warnings.append(f"'{el.findtext('name')}': no mass information; assumed 0")
         return 0.0
 
