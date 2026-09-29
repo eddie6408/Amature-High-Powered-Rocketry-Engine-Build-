@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 from aerodyne.aero.model import AeroCoefficients, FlightCondition
 from aerodyne.core.provenance import DataKind
-from aerodyne.vehicle.components import FinSet, NoseCone
+from aerodyne.vehicle.components import BodyTube, FinSet, NoseCone, Transition, TubeFinSet
 from aerodyne.vehicle.vehicle import Vehicle
 
 _NOSE_CP = {"conical": 2 / 3, "ogive": 0.466, "parabolic": 0.5, "haack": 0.437,
@@ -51,14 +51,17 @@ def barrowman_cp(vehicle: Vehicle, mach: float = 0.0) -> tuple[float, float, lis
     if nose is not None:
         cna = 2.0 * (nose.diameter / d_ref) ** 2
         parts.append((nose.name, cna, nose.x + _NOSE_CP.get(nose.shape, 0.5) * nose.length_))
+    for pn in vehicle.pod_noses():                       # external pods / boosters: one nose each
+        cna = 2.0 * (pn.diameter / d_ref) ** 2 * pn.instances
+        parts.append((pn.name, cna, pn.x + _NOSE_CP.get(pn.shape, 0.5) * pn.length_))
     for t in vehicle.transitions():
         d1, d2 = t.fore_diameter, t.aft_diameter
-        cna = 2.0 * ((d2 / d_ref) ** 2 - (d1 / d_ref) ** 2)
-        r = d1 / d2
+        cna = 2.0 * ((d2 / d_ref) ** 2 - (d1 / d_ref) ** 2) * t.instances
+        r = d1 / d2 if d2 > 0 else 0.0
         xt = t.x + t.length_ / 3 * (1 + (1 - r) / (1 - r * r)) if abs(1 - r * r) > 1e-9 else t.x
         parts.append((t.name, cna, xt))
     for f in vehicle.fin_sets():
-        parts.append((f.name, fin_cn_alpha(f, d_ref, mach), fin_cp(f)))
+        parts.append((f.name, fin_cn_alpha(f, d_ref, mach) * f.instances, fin_cp(f)))
     total = sum(p[1] for p in parts)
     if total == 0:
         raise ValueError("vehicle has no lifting surfaces")
@@ -137,20 +140,26 @@ class AnalyticalAeroModel:
         self._length = v.length
         self._fineness = self._length / self.reference_diameter
         # only airframe surfaces see the flow - internal tubes (motor mounts) are excluded
-        wet = sum(math.pi * b.outer_diameter * b.length_ for b in v.bodies() if "internal" not in b.tags)
-        n = v.nose()
-        if n is not None:
-            wet += math.pi * n.diameter / 2 * math.hypot(n.length_, n.diameter / 2) * 1.1
+        wet = sum(math.pi * b.outer_diameter * b.length_ * b.instances for b in v.bodies() if "internal" not in b.tags)
+        for n in [x for x in [v.nose()] if x is not None] + v.pod_noses():
+            wet += math.pi * n.diameter / 2 * math.hypot(n.length_, n.diameter / 2) * 1.1 * n.instances
         for t in v.transitions():
             wet += math.pi * (t.fore_diameter + t.aft_diameter) / 2 * math.hypot(
-                t.length_, (t.fore_diameter - t.aft_diameter) / 2)
+                t.length_, (t.fore_diameter - t.aft_diameter) / 2) * t.instances
         self._wet_body = wet
-        self._wet_fins = sum(2 * f.count * f.planform_area for f in v.fin_sets())
-        self._fin_frontal = sum(f.count * f.span * f.thickness for f in v.fin_sets())
-        self._fin_frontal_by_section = [(f.count * f.span * f.thickness, f.cross_section) for f in v.fin_sets()]
-        self._fin_tc = max((f.thickness / f.root_chord for f in v.fin_sets()), default=0.0)
+        self._wet_fins = sum(f.wetted_area * f.instances for f in v.fin_sets())
+        self._fin_frontal = sum(f.frontal_area * f.instances for f in v.fin_sets())
+        self._fin_frontal_by_section = [(f.frontal_area * f.instances, f.cross_section) for f in v.fin_sets()]
+        self._fin_tc = max((f.thickness / f.root_chord for f in v.fin_sets() if not isinstance(f, TubeFinSet)), default=0.0)
         self._mac = max((f.root_chord for f in v.fin_sets()), default=0.1)
         self._base_area = math.pi * v.aft_diameter() ** 2 / 4
+        # each pod / booster has its own base
+        for comps in v.pod_groups().values():
+            bodies = [c for c in comps if isinstance(c, (BodyTube, Transition, NoseCone))]
+            if bodies:
+                aft = max(bodies, key=lambda c: c.x + c.length)
+                d = aft.outer_diameter if isinstance(aft, BodyTube) else aft.aft_diameter if isinstance(aft, Transition) else aft.diameter
+                self._base_area += math.pi * d * d / 4 * aft.instances
 
     def drag_breakdown(self, mach: float, reynolds_per_m: float, thrusting: bool = False) -> dict[str, float]:
         """Zero-lift drag split into friction, pressure and base (same split OpenRocket reports)."""
@@ -169,6 +178,8 @@ class AnalyticalAeroModel:
         cd_fin_p = sum(area * _fin_edge_cd(sec, mach) for area, sec in self._fin_frontal_by_section) / a_ref
         nose = self.vehicle.nose()
         cd_nose = _nose_wave_cd(nose, mach) * (nose.diameter / self.reference_diameter) ** 2 if nose else 0
+        cd_nose += sum(_nose_wave_cd(pn, mach) * (pn.diameter / self.reference_diameter) ** 2 * pn.instances
+                       for pn in self.vehicle.pod_noses())
         cd_para = 1.2 * self.vehicle.launch_lug_drag_area / a_ref
         return {"friction": cd_fric, "pressure": cd_fin_p + cd_nose + cd_para, "base": cd_base}
 

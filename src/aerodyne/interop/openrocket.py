@@ -1,10 +1,12 @@
 """OpenRocket ``.ork`` design import.
 
 An ``.ork`` file is a ZIP (or gzip, or plain XML) containing an OpenRocket XML
-document. Supported: nose cone, body tube, transition, trapezoidal fin set,
-inner tube / motor mount (with motor configuration), bulkhead, centering ring,
-tube coupler, mass component, parachute, streamer, shock cord, launch lug,
-rail button. Positions are resolved from OpenRocket's relative placement
+document. Supported: nose cone, body tube, transition, trapezoidal / freeform /
+elliptical fin sets, tube fins, inner tube / motor mount (with motor configuration),
+bulkhead, centering ring, tube coupler, mass component, parachute, streamer, shock
+cord, launch lug, rail button, pods and parallel stages (side boosters, imported as
+fixed external bodies: their motors are recorded, booster thrust and separation are
+not simulated). Positions are resolved from OpenRocket's relative placement
 (``top``/``middle``/``bottom``/``after``/``absolute``, both the older
 ``<position type=...>`` and the newer ``<axialoffset method=...>`` syntax)
 and ``auto`` radii are resolved from neighbouring components.
@@ -31,6 +33,7 @@ from aerodyne.vehicle.components import (
     NoseCone,
     PointMass,
     Transition,
+    TubeFinSet,
 )
 from aerodyne.vehicle.vehicle import Vehicle
 
@@ -39,7 +42,8 @@ _SHAPES = {"ogive": "ogive", "conical": "conical", "parabolic": "parabolic", "ha
 _MASS_ONLY = {"masscomponent", "shockcord", "streamer", "launchlug", "railbutton",
               "centeringring", "tubecoupler", "parachute", "bulkhead", "innertube", "engineblock"}
 _FINS = {"trapezoidfinset", "freeformfinset", "ellipticalfinset"}
-_SUPPORTED = {"nosecone", "bodytube", "transition", "stage", *_FINS, *_MASS_ONLY}
+_PODS = {"podset", "parallelstage", "boosterset"}
+_SUPPORTED = {"nosecone", "bodytube", "transition", "stage", "tubefinset", *_FINS, *_MASS_ONLY, *_PODS}
 
 
 @dataclass
@@ -50,6 +54,8 @@ class MotorRef:
     length_m: float | None
     delay: str | None
     config_id: str | None
+    mount: str = "main"          # "main", or the pod / booster group it sits in
+    count: int = 1               # motors of this kind (boosters: one per booster)
 
 
 @dataclass
@@ -131,6 +137,15 @@ def _placement(el: ET.Element) -> tuple[str, float]:
     return "after", 0.0
 
 
+@dataclass
+class _Pod:
+    name: str
+    count: int
+    offset: float = 0.0
+    booster: bool = False
+    comps: list = field(default_factory=list)
+
+
 class _Builder:
     def __init__(self) -> None:
         self.v = Vehicle(name="imported")
@@ -143,6 +158,7 @@ class _Builder:
         self.owner: dict[int, ET.Element] = {}              # id(component) -> XML element
         self.auto_rings: list[tuple[PointMass, float, float, float]] = []   # ring, ro, length, density
         self.subtree_overrides: list[ET.Element] = []
+        self.pod: _Pod | None = None                         # inside a pod set / parallel stage
 
     # ---- placement -----------------------------------------------------------
     @staticmethod
@@ -159,9 +175,19 @@ class _Builder:
 
     # ---- traversal -------------------------------------------------------------
     def _add(self, comp, el: ET.Element):
+        if self.pod is not None:
+            comp.instances = self.pod.count
+            comp.radial_offset = self.pod.offset
+            comp.tags = set(comp.tags) | {"pod", f"pod:{self.pod.name}"}
+            self.pod.comps.append(comp)
         self.v.add(comp)
         self.owner[id(comp)] = el
         return comp
+
+    def _push(self, fore: float, aft: float, r: float) -> None:
+        """Main-airframe stack, used to resolve 'auto' radii (pods keep their own)."""
+        if self.pod is None:
+            self.stack.append((fore, aft, r))
 
     def build(self, root: ET.Element) -> None:
         rocket = root.find("rocket")
@@ -178,9 +204,16 @@ class _Builder:
             x = self._children(st, fore=x, length=0.0, radius=math.nan, top_level=True)
         self._resolve_auto()
         # body-tube children need the resolved radius (fins, rings with 'auto' radii)
-        for tube, el in self.tubes:
-            ro = tube.outer_diameter / 2
-            self._children(el, tube.x, tube.length_, ro, airframe_ri=ro - tube.wall_thickness)
+        # tubes found while doing this (pods on a body tube) get their radii resolved before their own children
+        done = 0
+        while done < len(self.tubes):
+            batch, done = self.tubes[done:], len(self.tubes)
+            self._resolve_auto()
+            for tube, el, pod in batch:
+                ro = tube.outer_diameter / 2
+                self.pod = pod
+                self._children(el, tube.x, tube.length_, ro, airframe_ri=ro - tube.wall_thickness)
+                self.pod = None
         self._resolve_auto()
         self._resolve_rings()
         self._apply_subtree_overrides(root)
@@ -235,6 +268,11 @@ class _Builder:
                 if self._covers_subcomponents(el) and _f(el, "overridemass") is not None:
                     self.subtree_overrides.append(el)
                 after = self._children(el, after, 0.0, radius, top_level=True)
+                continue
+            if tag in _PODS:
+                method, off = _placement(el)
+                pod_len = sum(self._length(ch) for ch in (el.find("subcomponents") or []) if ch.tag in _SUPPORTED)
+                self._pod(el, self._x(method, off, pod_len, fore, length, after), radius)
                 continue
             method, off = _placement(el)
             if top_level:
@@ -291,7 +329,7 @@ class _Builder:
             self._override(c, el)
             self._add(c, el)
             self._shoulder(el, "aft", x + length, name, mat)
-            self.stack.append((x, x + length, r))
+            self._push(x, x + length, r)
             self._children(el, x, length, r)
         elif tag == "bodytube":
             r = _f(el, "radius", _f(el, "outerradius", math.nan))
@@ -301,8 +339,8 @@ class _Builder:
                 self.pending_auto.append((c, "outer_diameter"))
             self._override(c, el)
             self._add(c, el)
-            self.stack.append((x, x + length, r))
-            self.tubes.append((c, el))
+            self._push(x, x + length, r)
+            self.tubes.append((c, el, self.pod))
         elif tag == "transition":
             r1, r2 = _f(el, "foreradius", math.nan), _f(el, "aftradius", math.nan)
             c = Transition(name, x=x, length_=length, fore_diameter=2 * r1 if r1 == r1 else 0.0,
@@ -317,7 +355,7 @@ class _Builder:
             self._add(c, el)
             self._shoulder(el, "fore", x, name, mat)
             self._shoulder(el, "aft", x + length, name, mat)
-            self.stack.append((x, x + length, r2))
+            self._push(x, x + length, r2)
             self._children(el, x, length, r2)
         elif tag in _FINS:
             if (_f(el, "cant", 0) or 0) != 0:
@@ -343,6 +381,19 @@ class _Builder:
             self._override(c, el)
             self._add(c, el)
             self._fin_extras(el, c, mat)
+        elif tag == "tubefinset":
+            n = int(_f(el, "fincount", _f(el, "instancecount", 6)) or 6)
+            rb = parent_r if parent_r == parent_r else 0.0
+            tag_r = "radius" if el.find("radius") is not None else "outerradius"
+            ro = _f(el, tag_r, math.nan)
+            if _auto(el, tag_r) or ro != ro:
+                sn = math.sin(math.pi / n)                    # OpenRocket 'auto': neighbouring tubes touch
+                ro = rb * sn / (1 - sn) if n > 1 else rb
+            c = TubeFinSet(name, x=x, count=n, root_chord=length, span=2 * ro,
+                           thickness=_f(el, "thickness", 0.0005) or 0.0005, body_radius=rb, material=mat or "cardboard")
+            self._override(c, el)
+            self._add(c, el)
+            self.warnings.append(f"'{name}': tube fins - lift estimated as equal-planform flat fins (ESTIMATED)")
         elif tag == "innertube":
             ro = _f(el, "outerradius", 0.0)
             c = BodyTube(name, x=x, length_=length, outer_diameter=2 * ro,
@@ -384,6 +435,32 @@ class _Builder:
                 self._parachute(el, name)
             elif tag == "launchlug":
                 self.v.launch_lug_drag_area += math.pi * rad * rad
+
+    def _pod(self, el: ET.Element, x0: float, parent_r: float) -> None:
+        """Pod set or parallel stage: identical bodies around the airframe."""
+        name = (el.findtext("name") or el.tag).strip()
+        n = int(_f(el, "instancecount", _f(el, "podcount", 1)) or 1)
+        booster = el.tag != "podset"
+        outer, self.pod = self.pod, _Pod(name, n, booster=booster)
+        try:
+            self._children(el, x0, 0.0, math.nan, top_level=True)
+            radii = [getattr(c, "outer_diameter", 0.0) or getattr(c, "diameter", 0.0)
+                     or max(getattr(c, "fore_diameter", 0.0), getattr(c, "aft_diameter", 0.0)) for c in self.pod.comps]
+            pod_r = max(radii, default=0.0) / 2
+            ro = el.find("radiusoffset")
+            val = float(ro.text or 0) if ro is not None and ro.text else 0.0
+            method = ro.get("method", "relative") if ro is not None else "relative"
+            pr = parent_r if parent_r == parent_r else 0.0
+            # OpenRocket: 'relative' = gap from the parent's surface, 'surface' = touching, else axis distance
+            self.pod.offset = (pr + pod_r + val if method == "relative" else pr + pod_r if method == "surface" else val)
+            for c in self.pod.comps:
+                c.radial_offset = self.pod.offset
+            kind = "side boosters (parallel stage)" if booster else "pods"
+            self.warnings.append(
+                f"'{name}': {n} {kind} imported at {self.pod.offset * 1000:.0f} mm from the axis (mass, lift and drag of "
+                "each; ESTIMATED)" + ("; booster motors recorded but their thrust and separation are not simulated" if booster else ""))
+        finally:
+            self.pod = outer
 
     def _shoulder(self, el: ET.Element, side: str, x_joint: float, name: str, mat: Material | None) -> None:
         L = _f(el, f"{side}shoulderlength", 0.0) or 0.0
@@ -451,15 +528,34 @@ class _Builder:
             ref = MotorRef(manufacturer=(m.findtext("manufacturer") or "").strip(),
                            designation=(m.findtext("designation") or "").strip(),
                            diameter_m=_f(m, "diameter"), length_m=_f(m, "length"),
-                           delay=(m.findtext("delay") or None), config_id=m.get("configid"))
+                           delay=(m.findtext("delay") or None), config_id=m.get("configid"),
+                           mount=self.pod.name if self.pod else "main", count=self.pod.count if self.pod else 1)
             self.motors.append(ref)
             mlen = mlen or ref.length_m
+        if self.pod is not None:               # booster / pod motors: recorded, the airframe's slot stays the core's
+            return
         mlen = mlen or length
-        mdia = next((m.diameter_m for m in self.motors if m.diameter_m), None) or mount_d
+        mdia = next((m.diameter_m for m in self.motors if m.diameter_m and m.mount == "main"), None) or mount_d
         self.v.add(MotorSlot("motor", x=x + length + overhang - mlen, motor_length=mlen,
                              motor_diameter=mdia))
 
     def _resolve_auto(self) -> None:
+        # pod parts with 'auto' radii take the pod's own explicit radius
+        pods: dict[str, list[float]] = {}
+        for c in self.v.components:
+            key = next((t for t in c.tags if t.startswith("pod:")), None)
+            d = getattr(c, "outer_diameter", 0.0) or getattr(c, "diameter", 0.0)
+            if key and d:
+                pods.setdefault(key, []).append(d / 2)
+        keep = []
+        for comp, attr in self.pending_auto:
+            key = next((t for t in getattr(comp, "tags", set()) if t.startswith("pod:")), None)
+            if key and pods.get(key):
+                r = max(pods[key])
+                setattr(comp, attr, r if attr == "body_radius" else 2 * r)
+            else:
+                keep.append((comp, attr))
+        self.pending_auto = keep
         radii = [r for _, _, r in self.stack]
         known = [r for r in radii if r == r]
         default = max(known) if known else 0.0

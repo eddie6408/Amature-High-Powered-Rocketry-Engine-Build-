@@ -53,7 +53,12 @@ as you type. Pick the motor for analysis at the top to see loaded and burnout st
   `aerodyne validate-ork my-design.ork`. If the file was saved after running a simulation in
   OpenRocket, this compares AERODYNE's dry mass, CG, CP and drag with OpenRocket's own
   numbers. Freeform and elliptical fins are imported as equal-area trapezoids (flagged
-  ESTIMATED). Pods, tube fins and parallel stages are reported as unsupported.
+  ESTIMATED). Pods and parallel stages (side boosters) import as external bodies: each copy adds
+  its mass, inertia, lift and drag, and the main airframe's length and reference diameter are
+  unchanged. Booster motors are listed, but booster thrust and separation are not simulated yet.
+  Tube fins import with their true tube mass; their lift is estimated as flat fins of the same
+  side-on size, and they are left out of the flat-plate flutter check. OpenRocket materials that
+  AERODYNE doesn't know are kept with the design.
 
 ## 2. Motors
 

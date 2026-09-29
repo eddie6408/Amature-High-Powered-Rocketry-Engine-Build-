@@ -99,7 +99,7 @@ curve. It shows how the tools fit together; it is not a flight-ready design.
 | Digital twin + post-flight validation + calibration proposals | `aerodyne.twin` | ✅ |
 | Reporting (Markdown) | `aerodyne.reporting` | ✅ |
 | CAD integration: STEP (exact B-rep via OpenCASCADE/gmsh), STL, Fusion/SolidWorks/FreeCAD mass-property CSV; upload in the designer | `aerodyne.cad` | ✅ STEP needs `pip install ".[cad]"` |
-| OpenRocket `.ork` import + cross-validation against OpenRocket's own stored mass/CG/CP/Cd (`aerodyne validate-ork`) | `aerodyne.interop` | ✅ all 22 example files from the OpenRocket repository import; vs OpenRocket on files with supported parts: CP within +10 % (avg ~6 % aft), dry mass/CG within a few % (weighed values honoured), zero-lift Cd mean ±18 %; pods, tube fins, parallel stages reported as unsupported |
+| OpenRocket `.ork` import + cross-validation against OpenRocket's own stored mass/CG/CP/Cd (`aerodyne validate-ork`) | `aerodyne.interop` | ✅ all 22 example files from the OpenRocket repository import; vs OpenRocket on files with supported parts: CP within +10 % (avg ~6 % aft), dry mass/CG within a few % (weighed values honoured), zero-lift Cd mean ±18 %; pods, tube fins and parallel stages import (mass within 0.3 %, CP within ±6.4 % of OpenRocket on its examples; booster thrust/separation not yet simulated); custom materials travel with the design |
 | Fin flutter (NACA TN 4197) along the simulated flight | `aerodyne.structures.flutter` | ✅ ESTIMATED; typical shear moduli, per-fin override |
 | HPR safety code, certification levels, NAR distance table, FAA 101.25 weather limits | `aerodyne.safety` | ✅ checklist aid |
 | ThrustCurve.org search and download | `aerodyne.propulsion.thrustcurve` | ✅ needs internet |

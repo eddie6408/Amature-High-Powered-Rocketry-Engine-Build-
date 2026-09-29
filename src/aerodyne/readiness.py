@@ -20,7 +20,7 @@ from aerodyne.environment.atmosphere import G0
 from aerodyne.propulsion.motor import MotorPerformance
 from aerodyne.recovery.recovery import descent_rate
 from aerodyne.structures.flutter import flutter_along_trajectory
-from aerodyne.vehicle.components import FinSet
+from aerodyne.vehicle.components import FinSet, TubeFinSet
 from aerodyne.vehicle.mass import MassPropertiesEngine
 from aerodyne.workspace.design import Design
 from aerodyne.workspace.mission import Limits
@@ -100,7 +100,7 @@ def review(design: Design, motor: MotorPerformance, limits: Limits, nominal: Sim
 
     # fin flutter along the flight
     if atmosphere is not None:
-        for fs in [c for c in v.components if isinstance(c, FinSet)]:
+        for fs in [c for c in v.components if isinstance(c, FinSet) and not isinstance(c, TubeFinSet)]:
             fl = flutter_along_trajectory(fs, nominal, atmosphere)
             if fl is None:
                 add(Check(f"flutter_{fs.name}", f"Fin flutter ({fs.name})", "NOT RUN", "—",

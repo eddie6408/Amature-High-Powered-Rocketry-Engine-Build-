@@ -36,6 +36,21 @@ MATERIALS: dict[str, Material] = {m.name: m for m in [
 ]}
 
 
+BUILTIN_MATERIALS = frozenset(MATERIALS)
+
+
+def register_material(m: Material) -> str:
+    """Make a custom material (e.g. from an OpenRocket file) resolvable by name; returns its key.
+    A different material with a taken name is registered as "name [density]"."""
+    have = MATERIALS.get(m.name)
+    if have is None or have == m:
+        MATERIALS[m.name] = m
+        return m.name
+    key = f"{m.name} [{m.density:g}]"
+    MATERIALS[key] = Material(key, m.density, m.tensile_strength, m.youngs_modulus, m.shear_modulus)
+    return key
+
+
 def _material(m: str | Material) -> Material:
     return m if isinstance(m, Material) else MATERIALS[m]
 
@@ -47,6 +62,9 @@ class Component:
     mass_override: float | None = None     # kg, measured
     cg_override: float | None = None       # m, measured CG station (absolute)
     tags: set[str] = field(default_factory=set)   # e.g. {"recovery", "payload"}
+    # external pods / side boosters: identical copies spaced around the axis at radial_offset
+    instances: int = 1
+    radial_offset: float = 0.0
 
     # -- to be provided by subclasses -----------------------------------
     def estimated_mass(self) -> float:
@@ -67,7 +85,8 @@ class Component:
     # -- common ------------------------------------------------------------
     @property
     def mass(self) -> float:
-        return self.mass_override if self.mass_override is not None else self.estimated_mass()
+        one = self.mass_override if self.mass_override is not None else self.estimated_mass()
+        return one * max(1, self.instances)
 
     @property
     def mass_kind(self) -> DataKind:
@@ -79,7 +98,8 @@ class Component:
 
     def inertia(self) -> tuple[float, float]:
         kx, ky = self.inertia_per_mass()
-        return self.mass * kx, self.mass * ky
+        r2 = self.radial_offset ** 2          # parallel axis for copies around the axis
+        return self.mass * (kx + r2), self.mass * (ky + r2 / 2)
 
 
 @dataclass
@@ -191,6 +211,14 @@ class FinSet(Component):
     def planform_area(self) -> float:
         return 0.5 * (self.root_chord + self.tip_chord) * self.span
 
+    @property
+    def wetted_area(self) -> float:
+        return 2 * self.count * self.planform_area
+
+    @property
+    def frontal_area(self) -> float:
+        return self.count * self.span * self.thickness
+
     def estimated_mass(self) -> float:
         return self.count * self.planform_area * self.thickness * _material(self.material).density
 
@@ -206,6 +234,45 @@ class FinSet(Component):
         ixx = r ** 2 + s ** 2 / 18
         iyy = 0.5 * ixx + (a ** 2) / 18
         return ixx, iyy
+
+
+@dataclass
+class TubeFinSet(FinSet):
+    """Tube fins: ``count`` open tubes of length ``root_chord`` and outer radius ``span / 2``
+    around the body. For lift they are treated as flat fins of the same side-on planform
+    (length x tube diameter), an ESTIMATE; mass, wetted and frontal areas are the tubes' own."""
+
+    cross_section: str = "square"
+
+    def __post_init__(self) -> None:
+        self.tip_chord = self.root_chord
+        self.sweep = 0.0
+
+    @property
+    def outer_radius(self) -> float:
+        return self.span / 2
+
+    @property
+    def wetted_area(self) -> float:
+        ro, ri = self.outer_radius, max(self.outer_radius - self.thickness, 0.0)
+        return self.count * 2 * math.pi * (ro + ri) * self.root_chord
+
+    @property
+    def frontal_area(self) -> float:
+        ro, ri = self.outer_radius, max(self.outer_radius - self.thickness, 0.0)
+        return self.count * math.pi * (ro * ro - ri * ri)
+
+    def estimated_mass(self) -> float:
+        return self.frontal_area * self.root_chord * _material(self.material).density
+
+    def local_cg(self) -> float:
+        return self.root_chord / 2
+
+    def inertia_per_mass(self) -> tuple[float, float]:
+        rc = self.body_radius + self.outer_radius
+        ro, ri = self.outer_radius, max(self.outer_radius - self.thickness, 0.0)
+        ixx = rc ** 2 + (ro * ro + ri * ri) / 2
+        return ixx, 0.5 * ixx + self.root_chord ** 2 / 12
 
 
 @dataclass

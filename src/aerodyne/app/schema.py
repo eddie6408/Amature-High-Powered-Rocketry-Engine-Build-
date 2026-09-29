@@ -50,6 +50,13 @@ COMPONENTS = {
         MATERIAL_FIELD,
         {"name": "shear_modulus_gpa", "label": "Shear modulus for flutter (blank = typical for material)", "type": _N,
          "unit": "GPa", "optional": True}]},
+    "TubeFinSet": {"label": "Tube fins", "fields": [
+        {"name": "count", "label": "Tube count", "type": "integer"},
+        {"name": "root_chord", "label": "Tube length", "type": _N, "unit": "m"},
+        {"name": "span", "label": "Tube outer diameter", "type": _N, "unit": "m"},
+        {"name": "thickness", "label": "Tube wall thickness", "type": _N, "unit": "m"},
+        {"name": "body_radius", "label": "Body radius at fins", "type": _N, "unit": "m"},
+        MATERIAL_FIELD]},
     "Bulkhead": {"label": "Bulkhead", "fields": [
         {"name": "diameter", "label": "Diameter", "type": _N, "unit": "m"},
         {"name": "thickness", "label": "Thickness", "type": _N, "unit": "m"},
@@ -91,6 +98,8 @@ DEFAULTS = {
                    "wall_thickness": 0.0015, "material": "fiberglass"},
     "FinSet": {"name": "Fins", "count": 3, "root_chord": 0.14, "tip_chord": 0.06, "span": 0.075,
                "sweep": 0.07, "thickness": 0.0024, "body_radius": 0.033, "material": "g10"},
+    "TubeFinSet": {"name": "Tube fins", "count": 6, "root_chord": 0.1, "span": 0.041, "thickness": 0.001,
+                   "body_radius": 0.033, "material": "cardboard"},
     "Bulkhead": {"name": "Bulkhead", "diameter": 0.063, "thickness": 0.006, "material": "birch_plywood"},
     "PointMass": {"name": "Mass item", "mass_estimate": 0.1, "length_": 0.1, "radius": 0.02, "tags": []},
     "MotorSlot": {"name": "motor", "motor_length": 0.25, "motor_diameter": 0.038},
@@ -100,7 +109,8 @@ DEFAULTS = {
 
 
 def schema() -> dict:
-    return {"components": {k: {"label": v["label"], "fields": COMMON + v["fields"],
+    mat = {**MATERIAL_FIELD, "options": sorted(MATERIALS)}      # includes custom materials loaded so far
+    return {"components": {k: {"label": v["label"], "fields": COMMON + [mat if f is MATERIAL_FIELD else f for f in v["fields"]],
                                "defaults": DEFAULTS[k]} for k, v in COMPONENTS.items()},
             "recovery_device": RECOVERY_DEVICE, "materials": {k: m.density for k, m in MATERIALS.items()}}
 
@@ -122,12 +132,26 @@ def _nose_radius(shape: str, x: np.ndarray, L: float, R: float) -> np.ndarray:
 
 def profile(v: Vehicle) -> list[dict]:
     """Side-view outline shapes (x along the axis, y radial) for the designer drawing."""
-    from aerodyne.vehicle.components import (
-        BodyTube, Bulkhead, CadPart, FinSet, MotorSlot, NoseCone, PointMass, Transition,
-    )
 
     shapes: list[dict] = []
     for c in v.components:
+        start = len(shapes)
+        _shape(c, shapes)
+        if c.radial_offset > 0:                    # pods / boosters: drawn above (and below) the airframe
+            own = shapes[start:]
+            del shapes[start:]
+            for sgn in ((1, -1) if c.instances >= 2 else (1,)):
+                shapes += [{**sh, "kind": sh["kind"], "points": [[x, y + sgn * c.radial_offset] for x, y in sh["points"]]}
+                           for sh in own]
+    return shapes
+
+
+def _shape(c, shapes: list[dict]) -> None:
+    from aerodyne.vehicle.components import (
+        BodyTube, Bulkhead, CadPart, FinSet, MotorSlot, NoseCone, PointMass, Transition, TubeFinSet,
+    )
+
+    if True:
         if isinstance(c, NoseCone):
             xs = np.linspace(0, c.length_, 40)
             r = _nose_radius(c.shape, xs, c.length_, c.diameter / 2)
@@ -142,6 +166,11 @@ def profile(v: Vehicle) -> list[dict]:
             r1, r2 = c.fore_diameter / 2, c.aft_diameter / 2
             shapes.append({"kind": "body", "name": c.name,
                            "points": [[c.x, r1], [c.x + c.length_, r2], [c.x + c.length_, -r2], [c.x, -r1]]})
+        elif isinstance(c, TubeFinSet):
+            rb, ro = c.body_radius, c.outer_radius
+            for sgn in (1, -1):
+                shapes.append({"kind": "fin", "name": c.name, "points": [[c.x, sgn * rb], [c.x, sgn * (rb + 2 * ro)],
+                               [c.x + c.root_chord, sgn * (rb + 2 * ro)], [c.x + c.root_chord, sgn * rb]]})
         elif isinstance(c, FinSet):
             rb = c.body_radius
             tip0 = c.x + c.sweep
@@ -157,4 +186,3 @@ def profile(v: Vehicle) -> list[dict]:
             r = getattr(c, "radius", 0.0) or getattr(c, "diameter", 0.0) / 2 or 0.01
             shapes.append({"kind": "mass", "name": c.name,
                            "points": [[c.x, r], [c.x + length, r], [c.x + length, -r], [c.x, -r]]})
-    return shapes

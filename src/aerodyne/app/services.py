@@ -408,7 +408,7 @@ def flight_card(ws: Workspace, mission_id: str, conditions: dict | None = None) 
     from aerodyne.recovery.recovery import descent_rate
     from aerodyne.safety import safety_review
     from aerodyne.structures.flutter import flutter_along_trajectory
-    from aerodyne.vehicle.components import FinSet
+    from aerodyne.vehicle.components import FinSet, TubeFinSet
 
     c = conditions or {}
     m = ws.mission(mission_id)
@@ -432,7 +432,7 @@ def flight_card(ws: Workspace, mission_id: str, conditions: dict | None = None) 
             recovery.append({"name": dev.name, "diameter_m": dev.diameter, "cd": dev.cd,
                              "deploy": "apogee" if dev.deploy_event == "apogee" else f"{dev.deploy_altitude_agl:.0f} m AGL"})
         landing_rate = descent_rate(spent.mass, d.recovery.body_cd_area + sum(x.cd_area for x in d.recovery.devices), 1.2)
-    flutter = [dict(fl, fin=f.name) for f in v.components if isinstance(f, FinSet)
+    flutter = [dict(fl, fin=f.name) for f in v.components if isinstance(f, FinSet) and not isinstance(f, TubeFinSet)
                for fl in [flutter_along_trajectory(f, res, cfg.atmosphere)] if fl]
     wind = c.get("wind_speed")
     gust = c.get("gust_speed")

@@ -1,0 +1,50 @@
+<?xml version='1.0' encoding='utf-8'?>
+<openrocket version="1.9" creator="OpenRocket 23.09">
+  <rocket><name>Pods and tube fins</name><subcomponents>
+    <stage><name>Sustainer</name><subcomponents>
+      <nosecone><name>Nose</name><length>0.2</length><shape>ogive</shape><aftradius>0.03</aftradius>
+        <thickness>0.002</thickness><material type="bulk" density="1250">PLA</material></nosecone>
+      <bodytube><name>Body</name><length>0.6</length><radius>0.03</radius><thickness>0.001</thickness>
+        <material type="bulk" density="1200">Cardboard</material>
+        <subcomponents>
+          <tubefinset><name>Tube fins</name><fincount>6</fincount><radius>auto</radius><length>0.08</length>
+            <thickness>0.0005</thickness><axialoffset method="bottom">0.0</axialoffset>
+            <material type="bulk" density="900">Paper</material></tubefinset>
+          <innertube><name>Motor tube</name><axialoffset method="bottom">0.0</axialoffset><length>0.1</length>
+            <outerradius>0.0125</outerradius><thickness>0.0005</thickness>
+            <material type="bulk" density="900">Paper</material>
+            <motormount><overhang>0.0</overhang><motor configid="c1"><manufacturer>AeroTech</manufacturer>
+              <designation>F50T</designation><diameter>0.029</diameter><length>0.098</length><delay>6</delay></motor></motormount>
+          </innertube>
+          <podset><name>Side pods</name><instancecount>2</instancecount>
+            <radiusoffset method="relative">0.01</radiusoffset><axialoffset method="bottom">0.0</axialoffset>
+            <subcomponents>
+              <nosecone><name>Pod nose</name><length>0.06</length><shape>conical</shape><aftradius>0.012</aftradius>
+                <thickness>0.001</thickness><material type="bulk" density="1250">PLA</material></nosecone>
+              <bodytube><name>Pod tube</name><length>0.2</length><radius>auto</radius><thickness>0.0005</thickness>
+                <material type="bulk" density="900">Paper</material>
+                <subcomponents>
+                  <trapezoidfinset><name>Pod fins</name><fincount>2</fincount><rootchord>0.05</rootchord><tipchord>0.03</tipchord>
+                    <height>0.03</height><sweeplength>0.02</sweeplength><thickness>0.002</thickness>
+                    <axialoffset method="bottom">0.0</axialoffset><material type="bulk" density="600">Balsa</material></trapezoidfinset>
+                </subcomponents></bodytube>
+            </subcomponents></podset>
+          <parallelstage><name>Boosters</name><instancecount>2</instancecount>
+            <radiusoffset method="relative">0.0</radiusoffset><axialoffset method="bottom">0.0</axialoffset>
+            <subcomponents>
+              <nosecone><name>Booster nose</name><length>0.05</length><shape>ogive</shape><aftradius>0.0125</aftradius>
+                <thickness>0.001</thickness><material type="bulk" density="1250">PLA</material></nosecone>
+              <bodytube><name>Booster tube</name><length>0.15</length><radius>0.0125</radius><thickness>0.0005</thickness>
+                <material type="bulk" density="900">Paper</material>
+                <subcomponents>
+                  <innertube><name>Booster mount</name><axialoffset method="bottom">0.0</axialoffset><length>0.07</length>
+                    <outerradius>0.0095</outerradius><thickness>0.0005</thickness><material type="bulk" density="900">Paper</material>
+                    <motormount><overhang>0.0</overhang><motor configid="c1"><manufacturer>Estes</manufacturer>
+                      <designation>D12</designation><diameter>0.018</diameter><length>0.07</length></motor></motormount>
+                  </innertube>
+                </subcomponents></bodytube>
+            </subcomponents></parallelstage>
+        </subcomponents></bodytube>
+    </subcomponents></stage>
+  </subcomponents></rocket>
+</openrocket>
