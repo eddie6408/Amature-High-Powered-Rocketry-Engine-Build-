@@ -345,6 +345,46 @@ def readiness(ws: Workspace, mission_id: str) -> dict:
     return ws.run(run_id)
 
 
+# ------------------------------------------------------------------------------ build log
+def build_status(ws: Workspace, vehicle_id: str, revision: str | None = None) -> dict:
+    """Parts of a design with estimated vs weighed mass, joined with their build records."""
+    from aerodyne.vehicle.components import MotorSlot
+
+    b = ws.build(vehicle_id)
+    rev = revision or ws.vehicle_summary(vehicle_id)["revisions"][-1]["label"]
+    d = ws.design(vehicle_id, rev)
+    parts = []
+    for c in d.vehicle.components:
+        if isinstance(c, MotorSlot):
+            continue
+        n = max(1, c.instances)
+        est = c.estimated_mass() * n
+        meas = c.mass_override * n if c.mass_override is not None else None
+        it = b["items"].get(c.name, {})
+        parts.append({"name": c.name, "type": type(c).__name__, "estimated_kg": est, "measured_kg": meas,
+                      "delta_kg": None if meas is None else meas - est, "status": it.get("status", "planned"),
+                      "cost": it.get("cost"), "supplier": it.get("supplier", ""), "part_number": it.get("part_number", ""),
+                      "notes": it.get("notes", "")})
+    est_total = sum(p["estimated_kg"] for p in parts)
+    current = sum(p["measured_kg"] if p["measured_kg"] is not None else p["estimated_kg"] for p in parts)
+    weighed = [p for p in parts if p["measured_kg"] is not None]
+    part_cost = sum(p["cost"] or 0.0 for p in parts)
+    extra_cost = sum(x["cost"] for x in b["extras"])
+    committed = sum(p["cost"] or 0.0 for p in parts if p["status"] != "planned") + sum(x["cost"] for x in b["extras"] if x["paid"])
+    by_status = {st: sum(1 for p in parts if p["status"] == st) for st in ws.BUILD_STATUSES}
+    orphans = sorted(set(b["items"]) - {p["name"] for p in parts})
+    return _clean({
+        "vehicle_id": vehicle_id, "revision": rev, "parts": parts, "extras": b["extras"], "budget": b["budget"],
+        "log": b["log"], "orphan_items": orphans,
+        "totals": {"estimated_dry_kg": est_total, "current_dry_kg": current, "weighed": len(weighed), "parts": len(parts),
+                   "weighed_share_by_mass": (sum(p["estimated_kg"] for p in weighed) / est_total) if est_total else 0.0,
+                   "cost_parts": part_cost, "cost_extras": extra_cost, "cost_total": part_cost + extra_cost,
+                   "cost_committed": committed, "parts_by_status": by_status,
+                   "done_share": (by_status["built"] + by_status["installed"]) / len(parts) if parts else 0.0,
+                   "hours": sum(e["hours"] for e in b["log"])},
+    })
+
+
 # ---------------------------------------------------------------------------- launch sites
 def apply_site(ws: Workspace, mission_id: str, site_id: str) -> dict:
     """Copy a library site (position, rail, waiver ceiling, field radius) into a mission."""

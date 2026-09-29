@@ -35,6 +35,7 @@ The app walks one rocket from idea to flight and back:
 | Step | What you do |
 |---|---|
 | **1 · Design** | Build the vehicle from components or import OpenRocket. Live side profile, mass, CG/CP and stability. Enter measured masses as you build. Revisions lock once flown. |
+| **1b · Build log** | Parts with status, cost, supplier and part number; mass budget (estimated vs weighed, dry-mass target); other costs against a budget; dated build journal with hours. |
 | **2 · Motors** | Search ThrustCurve.org and import certified/manufacturer curves, or import `.eng` files, with declared source and quality. |
 | **3 · Simulate** | A mission = revision + motor + site + wind + limits. 6-DOF prediction and Monte Carlo dispersion (apogee percentiles, landing ellipse). The **launch simulator** puts your rocket on the rail, runs a pad checklist and countdown, and animates the flight to touchdown under the wind, temperature, humidity and pressure you set, then compares the results with a calm standard day. **Earth 3D** flies it over real terrain and satellite imagery (or Google's photorealistic 3D tiles with your API key), with pad, chase and overview cameras; terrain can be cached for the field. **My location** uses the device's location services and loads live weather (including wind aloft) for that spot; manual coordinates work offline. |
 | **4 · Test & readiness** | Fly the real C flight software through 14 fault scenarios, then get a GO / NO-GO review with evidence for every check. |

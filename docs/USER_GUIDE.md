@@ -60,6 +60,23 @@ as you type. Pick the motor for analysis at the top to see loaded and burnout st
   side-on size, and they are left out of the flat-plate flutter check. OpenRocket materials that
   AERODYNE doesn't know are kept with the design.
 
+## 1b. Build log
+
+**Build log** follows each rocket from parts list to finished airframe:
+
+* **Parts:** every component of the current revision, with its status (planned, ordered,
+  received, built, installed), cost, supplier and part number. The mass columns show the design
+  estimate and the scale reading once you enter it in Design, with the difference.
+* **Mass budget:** each part's estimated mass against its weighed mass, and the dry mass so far
+  (weighed where available, estimated otherwise) against your target.
+* **Costs:** part costs plus other costs (epoxy, paint, hardware, shipping), against your
+  budget, with how much is already committed.
+* **Journal:** dated entries with hours, for what you did and learned. Total build time is
+  shown at the top.
+
+Build records are kept per rocket and carry over to new revisions. Records for parts that no
+longer exist are kept and listed.
+
 ## 2. Motors
 
 **Static tests.** If you static-test commercial motors, *Characterize a static test* reads the

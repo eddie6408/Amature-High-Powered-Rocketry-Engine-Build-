@@ -151,6 +151,81 @@ class Workspace:
         except KeyError:
             raise WorkspaceError(f"unknown motor {key}") from None
 
+    # build log (per vehicle: part costs/status, extra costs, budget, dated journal) ---------------
+    BUILD_STATUSES = ("planned", "ordered", "received", "built", "installed")
+
+    def build(self, vehicle_id: str) -> dict:
+        self.registry.get(vehicle_id)                      # KeyError for unknown vehicles
+        p = self.root / "builds" / f"{_safe_name(vehicle_id)}.json"
+        b = json.loads(p.read_text()) if p.is_file() else {}
+        return {"items": b.get("items", {}), "extras": b.get("extras", []), "budget": b.get("budget", {}),
+                "log": b.get("log", [])}
+
+    def _save_build(self, vehicle_id: str, b: dict) -> dict:
+        (self.root / "builds").mkdir(exist_ok=True)
+        _write_json(self.root / "builds" / f"{_safe_name(vehicle_id)}.json", b)
+        return b
+
+    def save_build(self, vehicle_id: str, data: dict) -> dict:
+        """Replace part records, extra costs and budget (the journal is edited separately)."""
+        def num(v, what):
+            if v in (None, ""):
+                return None
+            try:
+                x = float(v)
+            except (TypeError, ValueError) as exc:
+                raise WorkspaceError(f"{what}: not a number") from exc
+            if x < 0:
+                raise WorkspaceError(f"{what} can't be negative")
+            return x
+
+        with self.lock:
+            b = self.build(vehicle_id)
+            items = {}
+            for name, it in (data.get("items") or {}).items():
+                st = it.get("status") or "planned"
+                if st not in self.BUILD_STATUSES:
+                    raise WorkspaceError(f"part status must be one of {', '.join(self.BUILD_STATUSES)}")
+                items[str(name)] = {"status": st, "cost": num(it.get("cost"), f"cost of {name}"),
+                                    "supplier": str(it.get("supplier") or ""), "part_number": str(it.get("part_number") or ""),
+                                    "notes": str(it.get("notes") or "")}
+            extras = [{"name": str(x.get("name") or "item"), "category": str(x.get("category") or "other"),
+                       "cost": num(x.get("cost"), f"cost of {x.get('name')}") or 0.0, "paid": bool(x.get("paid"))}
+                      for x in (data.get("extras") or [])]
+            bud = data.get("budget") or {}
+            budget = {"cost": num(bud.get("cost"), "cost budget"), "currency": str(bud.get("currency") or "USD"),
+                      "dry_mass_kg": num(bud.get("dry_mass_kg"), "target dry mass")}
+            b.update(items=items, extras=extras, budget=budget)
+            return self._save_build(vehicle_id, b)
+
+    def add_build_log(self, vehicle_id: str, entry: dict) -> dict:
+        title = str(entry.get("title") or "").strip()
+        if not title:
+            raise WorkspaceError("a journal entry needs a title")
+        try:
+            hours = float(entry.get("hours") or 0.0)
+        except (TypeError, ValueError) as exc:
+            raise WorkspaceError("hours: not a number") from exc
+        if hours < 0:
+            raise WorkspaceError("hours can't be negative")
+        with self.lock:
+            b = self.build(vehicle_id)
+            e = {"id": uuid.uuid4().hex[:8], "date": str(entry.get("date") or datetime.now(timezone.utc).date().isoformat()),
+                 "title": title, "text": str(entry.get("text") or ""), "hours": hours,
+                 "components": [str(c) for c in entry.get("components") or []]}
+            b["log"] = sorted(b["log"] + [e], key=lambda x: (x["date"], x["id"]))
+            self._save_build(vehicle_id, b)
+            return e
+
+    def delete_build_log(self, vehicle_id: str, entry_id: str) -> dict:
+        with self.lock:
+            b = self.build(vehicle_id)
+            if not any(e["id"] == entry_id for e in b["log"]):
+                raise KeyError(entry_id)
+            b["log"] = [e for e in b["log"] if e["id"] != entry_id]
+            self._save_build(vehicle_id, b)
+        return {"deleted": entry_id}
+
     # launch-site library ---------------------------------------------------------------------
     SITE_FIELDS = {"name": str, "latitude": float, "longitude": float, "altitude_msl": float,
                    "waiver_ceiling_agl_m": float, "waiver_ref": str, "field_radius_m": float,

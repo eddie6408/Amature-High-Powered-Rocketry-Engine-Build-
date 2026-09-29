@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { api } from "./api";
 import { Icon, Logo } from "./components/icons";
+import { BuildPage } from "./pages/BuildPage";
 import { DesignPage } from "./pages/DesignPage";
 import { FlightsPage } from "./pages/FlightsPage";
 import { HomePage } from "./pages/HomePage";
@@ -17,6 +18,7 @@ import { useRoute } from "./router";
 const NAV: Array<[string, string, string, string]> = [
   ["home", "Overview", "", "From idea to flight and back"],
   ["design", "Design", "1", "Vehicle, masses, stability"],
+  ["build", "Build log", "1b", "Parts, costs, mass budget, journal"],
   ["motors", "Motors", "2", "Certified thrust data"],
   ["missions", "Simulate", "3", "Missions and Monte Carlo"],
   ["launch", "Launch simulator", "3b", "Animated flight under real weather"],
@@ -67,6 +69,7 @@ export function App() {
         <StatusBar title={current[1]} sub={current[3]} theme={theme} setTheme={setTheme} />
         {page === "home" && <HomePage />}
         {page === "design" && <DesignPage vehicleId={route[1]} />}
+        {page === "build" && <BuildPage vehicleId={route[1]} />}
         {page === "motors" && <MotorsPage />}
         {page === "missions" && <MissionsPage missionId={route[1]} />}
         {page === "launch" && <LaunchPage missionId={route[1]} motorKey={route[2]} />}

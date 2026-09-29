@@ -575,3 +575,26 @@ details.workflow .steps { margin-top: 12px; }
 .lg-pt { background: #ffdd57; width: 8px !important; height: 8px !important; }
 .lg-ell { border: 3px solid #ff9f43; border-radius: 50% / 35% !important; width: 16px !important; }
 textarea.wide { width: 100%; margin: 8px 0; }
+
+/* build log */
+.toolbar .spacer { flex: 1; }
+.table-scroll { overflow-x: auto; }
+table.parts td { white-space: nowrap; }
+table.parts input, table.parts select { padding: 4px 6px; font-size: 12.5px; }
+table.parts .num-in { width: 90px; }
+.massbars { display: grid; gap: 7px; }
+.mb-row { display: grid; grid-template-columns: minmax(90px, 180px) 1fr 70px; gap: 10px; align-items: center; font-size: 12.5px; }
+.mb-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
+.mb-track { position: relative; height: 14px; }
+.mb-est { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: color-mix(in srgb, var(--series-1) 35%, transparent);
+  border: 1px solid var(--series-1); }
+.mb-meas { position: absolute; left: 0; top: 4px; bottom: 4px; border-radius: 3px; background: var(--series-2); }
+.mb-val { text-align: right; }
+.journal { list-style: none; padding: 0; margin: 14px 0 0; display: grid; gap: 10px; }
+.journal li { display: grid; grid-template-columns: 96px 1fr auto; gap: 12px; align-items: start; padding: 10px 0; border-top: 1px solid var(--grid); }
+.journal p { margin: 4px 0 0; color: var(--text-secondary); font-size: 13px; white-space: pre-wrap; }
+.j-date { color: var(--text-muted); font-size: 12px; }
+table.extras { table-layout: fixed; }
+table.extras input:not([type=checkbox]) { width: 100%; padding: 4px 6px; font-size: 12.5px; }
+table.extras td { padding: 4px; }
+table.extras .link { margin: 0; padding: 0; font-size: 12px; }
