@@ -290,6 +290,19 @@ and the calibrations adopted.
 
 Then fly the calibrated revision and repeat.
 
+## Logbook and motor inventory
+
+**Logbook → Flight log** lists every flight with its motor (class and impulse), site, measured and
+predicted apogee, outcome (success, partial, failure, scrubbed), whether it was recovered, a
+certification-attempt tick and notes. These entries are stored beside the flight record; its
+measured data is never changed. The totals show flights, success rate, total impulse flown by
+class, the highest flight and the highest certification level flown.
+
+**Logbook → Motor inventory** tracks single-use motors, reload kits and reusable casings: quantity,
+delays, lot, purchase date, cost, storage location, and optionally the thrust curve it matches.
+*Use 1* takes one off the stock and records the flight it went on. With curves linked, the
+propellant mass on hand is totalled. Store motors as your local regulations and insurer require.
+
 ## Flight computer
 
 The firmware core (`firmware/`) is portable C11 with a HAL. See [FIRMWARE.md](FIRMWARE.md) for

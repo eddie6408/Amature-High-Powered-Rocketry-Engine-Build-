@@ -82,6 +82,13 @@ class App:
         r("PUT", r"/api/vehicles/(?P<vid>[^/]+)/build", lambda q, b, vid: (ws_.save_build(vid, b), svc.build_status(ws_, vid))[1])
         r("POST", r"/api/vehicles/(?P<vid>[^/]+)/build/log", lambda q, b, vid: ws_.add_build_log(vid, b))
         r("DELETE", r"/api/vehicles/(?P<vid>[^/]+)/build/log/(?P<eid>[^/]+)", lambda q, b, vid, eid: ws_.delete_build_log(vid, eid))
+        r("GET", r"/api/logbook", lambda q, b: svc.logbook(ws_))
+        r("PUT", r"/api/flights/(?P<fid>[^/]+)/log", lambda q, b, fid: ws_.save_flight_log(fid, b))
+        r("GET", r"/api/inventory", lambda q, b: svc.inventory_view(ws_))
+        r("POST", r"/api/inventory", lambda q, b: ws_.save_inventory_item(b))
+        r("DELETE", r"/api/inventory/(?P<iid>[^/]+)", lambda q, b, iid: ws_.delete_inventory_item(iid))
+        r("POST", r"/api/inventory/(?P<iid>[^/]+)/use", lambda q, b, iid: ws_.use_inventory(
+            iid, b.get("flight_id") or None, int(b.get("count", 1))))
         r("POST", r"/api/recovery/size", lambda q, b: svc.recovery_size(b))
         r("POST", r"/api/missions/(?P<mid>[^/]+)/recovery-drift", lambda q, b, mid: svc.recovery_drift(ws_, mid, b))
         r("GET", r"/api/sites", lambda q, b: ws_.list_sites())

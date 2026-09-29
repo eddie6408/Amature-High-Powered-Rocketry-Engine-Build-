@@ -611,3 +611,17 @@ table.drift td.cell span { font-size: 11px; color: var(--text-muted); font-famil
 table.drift td.in { background: color-mix(in srgb, var(--good) 12%, transparent); }
 table.drift td.edge { background: color-mix(in srgb, var(--warning) 16%, transparent); }
 table.drift td.out { background: color-mix(in srgb, var(--critical) 16%, transparent); }
+
+/* logbook */
+.tabs { display: inline-flex; gap: 2px; padding: 3px; border-radius: 10px; border: 1px solid var(--border-strong); background: var(--surface-1); width: max-content; }
+.tabs button { border: none; background: transparent; color: var(--text-secondary); padding: 6px 14px; border-radius: 7px; }
+.tabs button.on { background: var(--accent-soft); color: var(--text-primary); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); font-weight: 600; }
+table.logbook td { white-space: nowrap; }
+table.logbook input:not([type=checkbox]), table.logbook select { padding: 4px 6px; font-size: 12.5px; min-width: 90px; }
+.check-inline { display: inline-flex; gap: 6px; align-items: center; }
+.use-cell { display: inline-flex; gap: 6px; }
+.use-cell select { padding: 4px 6px; font-size: 12.5px; }
+.row-actions { white-space: nowrap; }
+tr.muted-row td { opacity: 0.55; }
+.use-cell button { white-space: nowrap; }
+.use-cell select { max-width: 150px; }

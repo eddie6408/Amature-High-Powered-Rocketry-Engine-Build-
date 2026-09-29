@@ -8,6 +8,7 @@ import { FlightsPage } from "./pages/FlightsPage";
 import { HomePage } from "./pages/HomePage";
 import { GroundPage } from "./pages/GroundPage";
 import { LaunchDayPage } from "./pages/LaunchDayPage";
+import { LogbookPage } from "./pages/LogbookPage";
 import { LaunchPage } from "./pages/LaunchPage";
 import { MissionsPage } from "./pages/MissionsPage";
 import { MotorsPage } from "./pages/MotorsPage";
@@ -29,6 +30,7 @@ const NAV: Array<[string, string, string, string]> = [
   ["sites", "Launch sites", "", "Fields, waivers, landing dispersion"],
   ["ground", "Fly", "5", "Ground station"],
   ["flights", "Analyse", "6", "Flights against prediction"],
+  ["logbook", "Logbook", "", "Flight log and motor inventory"],
 ];
 
 interface WsStatus { name: string; root: string; vehicles: number; flown_revisions: number; motors: number; missions: number; flights: number }
@@ -81,6 +83,7 @@ export function App() {
         {page === "sites" && <SitesPage siteId={route[1]} />}
         {page === "ground" && <GroundPage />}
         {page === "flights" && <FlightsPage flightId={route[1]} />}
+        {page === "logbook" && <LogbookPage tab={route[1]} />}
       </div>
     </div>
   );

@@ -345,6 +345,75 @@ def readiness(ws: Workspace, mission_id: str) -> dict:
     return ws.run(run_id)
 
 
+# ------------------------------------------------------------------------ logbook, inventory
+def logbook(ws: Workspace) -> dict:
+    """Every flight with its outcome and numbers, plus totals by vehicle and motor class."""
+    from aerodyne.safety import required_cert_level
+
+    sites = {x["id"]: x["name"] for x in ws.list_sites()}
+    rows = []
+    for f in ws.list_flights():
+        lg = ws.flight_log(f["flight_id"])
+        an = ws.flight_analysis(f["flight_id"]) or {}
+        apo = next((r for r in an.get("comparison", []) if r.get("key") == "apogee_agl_m"), None) or {}
+        mot = f.get("motor") or {}
+        site = lg.get("site_name")
+        site_source = "log" if site else None
+        if not site and f.get("mission_id"):
+            site_source = "mission (current)"
+            try:
+                mm = ws.mission(f["mission_id"])
+                site = sites.get(mm.site_id or "") or f"{mm.site.get('latitude', 0):.3f}, {mm.site.get('longitude', 0):.3f}"
+            except (KeyError, WorkspaceError, FileNotFoundError):
+                site = None
+        imp = mot.get("total_impulse_Ns")
+        rows.append({"flight_id": f["flight_id"], "date": f.get("date"), "vehicle_id": f["vehicle_id"], "revision": f["revision"],
+                     "motor": f"{mot.get('manufacturer', '')} {mot.get('designation', f['motor_key'])}".strip(),
+                     "motor_class": (mot.get("classification") or "?")[:1], "total_impulse_ns": imp,
+                     "cert_level": required_cert_level(imp)[0] if imp else None, "site": site, "site_source": site_source,
+                     "apogee_measured_m": apo.get("actual"), "apogee_predicted_m": apo.get("simulated"),
+                     "outcome": lg.get("outcome"), "recovered": lg.get("recovered"), "damage": lg.get("damage", ""),
+                     "cert_attempt": lg.get("cert_attempt"), "notes": lg.get("notes") or f.get("notes", ""),
+                     "flyer": lg.get("flyer", "")})
+    rows.sort(key=lambda r: (r["date"] or "", r["flight_id"]))
+    flown = [r for r in rows if r["outcome"] != "scrubbed"]
+    rated = [r for r in flown if r["outcome"]]
+    by_class: dict[str, int] = {}
+    by_vehicle: dict[str, int] = {}
+    for r in flown:
+        by_class[r["motor_class"]] = by_class.get(r["motor_class"], 0) + 1
+        by_vehicle[r["vehicle_id"]] = by_vehicle.get(r["vehicle_id"], 0) + 1
+    highest = max((r for r in flown if r["apogee_measured_m"]), key=lambda r: r["apogee_measured_m"], default=None)
+    return _clean({"flights": rows, "totals": {
+        "flights": len(flown), "scrubbed": len(rows) - len(flown),
+        "success_rate": (sum(r["outcome"] == "success" for r in rated) / len(rated)) if rated else None,
+        "total_impulse_ns": sum(r["total_impulse_ns"] or 0 for r in flown),
+        "highest_m": highest and highest["apogee_measured_m"], "highest_flight": highest and highest["flight_id"],
+        "by_class": dict(sorted(by_class.items())), "by_vehicle": by_vehicle,
+        "max_cert_level_flown": max((r["cert_level"] or 0 for r in flown), default=None)}})
+
+
+def inventory_view(ws: Workspace) -> dict:
+    items = []
+    for it in ws.inventory():
+        m = None
+        if it.get("motor_key"):
+            try:
+                m = ws.motor(it["motor_key"]).summary()
+            except (KeyError, WorkspaceError):
+                m = None
+        prop = (m or {}).get("propellant_mass_kg")
+        items.append({**it, "motor": m, "propellant_on_hand_kg": prop * it["quantity"] if prop and it["kind"] != "casing" else None})
+    stock = [x for x in items if x["kind"] != "casing"]
+    return _clean({"items": items, "totals": {
+        "motors_on_hand": sum(x["quantity"] for x in stock), "casings": sum(x["quantity"] for x in items if x["kind"] == "casing"),
+        "value": sum((x["cost_each"] or 0) * x["quantity"] for x in items),
+        "propellant_on_hand_kg": sum(x["propellant_on_hand_kg"] or 0 for x in stock),
+        "propellant_unknown": sum(1 for x in stock if x["quantity"] and x["propellant_on_hand_kg"] is None),
+        "used": sum(u["count"] for x in items for u in x["used"])},
+        "note": "Store motors as your local regulations and your insurer require."})
+
+
 # ------------------------------------------------------------------------------- recovery
 def recovery_size(data: dict) -> dict:
     from aerodyne.recovery.sizing import CANOPY_CD, size_canopy

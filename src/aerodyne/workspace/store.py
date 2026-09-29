@@ -226,6 +226,92 @@ class Workspace:
             self._save_build(vehicle_id, b)
         return {"deleted": entry_id}
 
+    # motor inventory --------------------------------------------------------------------------
+    INVENTORY_KINDS = ("motor", "reload", "casing")
+
+    def inventory(self) -> list[dict]:
+        p = self.root / "inventory.json"
+        return json.loads(p.read_text()) if p.is_file() else []
+
+    def save_inventory_item(self, data: dict) -> dict:
+        kind = data.get("kind") or "motor"
+        if kind not in self.INVENTORY_KINDS:
+            raise WorkspaceError(f"kind must be one of {', '.join(self.INVENTORY_KINDS)}")
+        name = str(data.get("designation") or "").strip()
+        if not name:
+            raise WorkspaceError("give the motor or casing designation")
+        try:
+            qty = int(data.get("quantity", 1))
+            cost = None if data.get("cost_each") in (None, "") else float(data["cost_each"])
+        except (TypeError, ValueError) as exc:
+            raise WorkspaceError(f"quantity / cost: {exc}") from exc
+        if qty < 0 or (cost is not None and cost < 0):
+            raise WorkspaceError("quantity and cost can't be negative")
+        key = data.get("motor_key") or None
+        if key:
+            self.motor(key)
+        with self.lock:
+            items = self.inventory()
+            old = next((x for x in items if x["id"] == data.get("id")), None)
+            item = {"id": old["id"] if old else uuid.uuid4().hex[:8], "kind": kind, "designation": name,
+                    "manufacturer": str(data.get("manufacturer") or ""), "motor_key": key, "quantity": qty,
+                    "delays": str(data.get("delays") or ""), "lot": str(data.get("lot") or ""),
+                    "purchased": str(data.get("purchased") or ""), "cost_each": cost,
+                    "location": str(data.get("location") or ""), "notes": str(data.get("notes") or ""),
+                    "used": old["used"] if old else []}
+            items = [x for x in items if x["id"] != item["id"]] + [item]
+            _write_json(self.root / "inventory.json", items)
+            return item
+
+    def delete_inventory_item(self, item_id: str) -> dict:
+        with self.lock:
+            items = self.inventory()
+            if not any(x["id"] == item_id for x in items):
+                raise KeyError(item_id)
+            _write_json(self.root / "inventory.json", [x for x in items if x["id"] != item_id])
+        return {"deleted": item_id}
+
+    def use_inventory(self, item_id: str, flight_id: str | None = None, count: int = 1) -> dict:
+        with self.lock:
+            items = self.inventory()
+            it = next((x for x in items if x["id"] == item_id), None)
+            if it is None:
+                raise KeyError(item_id)
+            if it["kind"] == "casing":
+                raise WorkspaceError("casings are reusable; record the reload instead")
+            if count < 1 or it["quantity"] < count:
+                raise WorkspaceError(f"only {it['quantity']} {it['designation']} in stock")
+            if flight_id:
+                self.flight(flight_id)
+            it["quantity"] -= count
+            it["used"].append({"flight_id": flight_id, "count": count, "date": _now()})
+            _write_json(self.root / "inventory.json", items)
+            return it
+
+    # flight logbook entries (outcome and notes, kept beside the write-once flight record) -------
+    OUTCOMES = ("success", "partial", "failure", "scrubbed")
+
+    def flight_log(self, flight_id: str) -> dict:
+        p = self.root / "flights" / _safe_name(flight_id) / "log.json"
+        return json.loads(p.read_text()) if p.is_file() else {}
+
+    def save_flight_log(self, flight_id: str, data: dict) -> dict:
+        self.flight(flight_id)
+        out = self.flight_log(flight_id)
+        if "outcome" in data:
+            if data["outcome"] not in (*self.OUTCOMES, "", None):
+                raise WorkspaceError(f"outcome must be one of {', '.join(self.OUTCOMES)}")
+            out["outcome"] = data["outcome"] or None
+        for k in ("recovered", "cert_attempt"):
+            if k in data:
+                out[k] = None if data[k] is None else bool(data[k])
+        for k in ("damage", "notes", "site_name", "flyer"):
+            if k in data:
+                out[k] = str(data[k] or "")
+        with self.lock:
+            _write_json(self.root / "flights" / _safe_name(flight_id) / "log.json", out)
+        return out
+
     # launch-site library ---------------------------------------------------------------------
     SITE_FIELDS = {"name": str, "latitude": float, "longitude": float, "altitude_msl": float,
                    "waiver_ceiling_agl_m": float, "waiver_ref": str, "field_radius_m": float,
