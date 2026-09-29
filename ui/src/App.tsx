@@ -11,6 +11,7 @@ import { LaunchPage } from "./pages/LaunchPage";
 import { MissionsPage } from "./pages/MissionsPage";
 import { MotorsPage } from "./pages/MotorsPage";
 import { ReadinessPage } from "./pages/ReadinessPage";
+import { SitesPage } from "./pages/SitesPage";
 import { useRoute } from "./router";
 
 const NAV: Array<[string, string, string, string]> = [
@@ -21,6 +22,7 @@ const NAV: Array<[string, string, string, string]> = [
   ["launch", "Launch simulator", "3b", "Animated flight under real weather"],
   ["readiness", "Test & readiness", "4", "Flight-software fault suite, GO / NO-GO"],
   ["launchday", "Launch day", "4b", "Safety code, flight card, checklist"],
+  ["sites", "Launch sites", "", "Fields, waivers, landing dispersion"],
   ["ground", "Fly", "5", "Ground station"],
   ["flights", "Analyse", "6", "Flights against prediction"],
 ];
@@ -70,6 +72,7 @@ export function App() {
         {page === "launch" && <LaunchPage missionId={route[1]} motorKey={route[2]} />}
         {page === "readiness" && <ReadinessPage missionId={route[1]} />}
         {page === "launchday" && <LaunchDayPage missionId={route[1]} />}
+        {page === "sites" && <SitesPage siteId={route[1]} />}
         {page === "ground" && <GroundPage />}
         {page === "flights" && <FlightsPage flightId={route[1]} />}
       </div>

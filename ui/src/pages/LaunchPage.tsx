@@ -4,6 +4,7 @@ import { api, type Mission, type Motor } from "../api";
 import type { Shape } from "../components/Profile";
 import { fmt } from "../components/scale";
 import { Card, ErrorBox, KindBadge, NumberField, SelectField, StatusPill, TextField } from "../components/ui";
+import type { Dispersion } from "../dispersion";
 import { fmtCoords, locationError, parseCoord } from "../geo";
 import { go } from "../router";
 import { EarthView } from "./EarthView";
@@ -53,6 +54,7 @@ export function LaunchPage({ missionId, motorKey }: { missionId?: string; motorK
   const [paused, setPaused] = useState(false);
   const pending = useRef<Promise<LaunchResult> | null>(null);
   const [pad, setPad] = useState<PadGeometry | null>(null);
+  const [disp, setDisp] = useState<Dispersion | null>(null);
   const [loc, setLoc] = useState<SiteLoc>({ lat: "", lon: "", alt: null, source: "mission" });
   const [live, setLive] = useState<(LiveWeather & { fetchedAt: number; edited: boolean }) | null>(null);
   const [locMsg, setLocMsg] = useState<string | null>(null);
@@ -68,6 +70,8 @@ export function LaunchPage({ missionId, motorKey }: { missionId?: string; motorK
   useEffect(() => {
     setPad(null);
     if (missionId) api.get<PadGeometry>(`/api/missions/${missionId}/pad`).then(setPad).catch(() => undefined);
+    setDisp(null);
+    if (missionId) api.get<Dispersion>(`/api/missions/${missionId}/dispersion`).then(setDisp).catch(() => undefined);
   }, [missionId]);
   useEffect(() => { if (mission && !motorKey && !motor) setMotor(mission.motor_key); }, [mission]);
   const missionSite = (): SiteLoc => ({ lat: pad ? String(pad.site.latitude) : "", lon: pad ? String(pad.site.longitude) : "",
@@ -186,7 +190,7 @@ export function LaunchPage({ missionId, motorKey }: { missionId?: string; motorK
       <ErrorBox error={err} />
       <div className="launch-grid">
         <div className="stack">
-          <SceneCard res={res} pad={pad} t={t} stage={stage} tMinus={tMinus} weather={w} location={locOk ? { latitude: lat!, longitude: lon!, altitude_msl: loc.alt! } : null} />
+          <SceneCard res={res} pad={pad} t={t} stage={stage} tMinus={tMinus} weather={w} location={locOk ? { latitude: lat!, longitude: lon!, altitude_msl: loc.alt! } : null} dispersion={disp} />
           {res && (stage === "flight" || stage === "complete") && <Playback res={res} t={t} setT={setT} speed={speed} setSpeed={setSpeed}
             paused={paused} setPaused={setPaused} stage={stage} setStage={setStage} />}
           {res && (stage === "flight" || stage === "complete") && <Readouts res={res} t={t} />}
@@ -308,7 +312,7 @@ function savedView(): View {
 }
 
 function SceneCard(props: { res: LaunchResult | null; pad: PadGeometry | null; t: number; stage: Stage; tMinus: number; weather: Weather;
-  location: { latitude: number; longitude: number; altitude_msl: number } | null }) {
+  location: { latitude: number; longitude: number; altitude_msl: number } | null; dispersion: Dispersion | null }) {
   const [view, setView] = useState<View>(savedView);
   const pick = (v: View) => { setView(v); try { localStorage.setItem("aerodyne-launch-view", v); } catch { /* not remembered */ } };
   return (
@@ -317,7 +321,8 @@ function SceneCard(props: { res: LaunchResult | null; pad: PadGeometry | null; t
         <button role="tab" aria-selected={view === "2d"} className={view === "2d" ? "on" : ""} onClick={() => pick("2d")}>Illustrated</button>
         <button role="tab" aria-selected={view === "earth"} className={view === "earth" ? "on" : ""} onClick={() => pick("earth")}>Earth 3D</button>
       </div>
-      {view === "2d" ? <Scene {...props} /> : <EarthView {...props} />}
+      {view === "2d" ? <Scene res={props.res} pad={props.pad} t={props.t} stage={props.stage} tMinus={props.tMinus} weather={props.weather} />
+        : <EarthView {...props} />}
     </div>
   );
 }

@@ -563,3 +563,15 @@ details.workflow summary { cursor: pointer; font-weight: 600; font-size: 14px; }
 details.workflow .steps { margin-top: 12px; }
 .dash table td, .state { white-space: nowrap; }
 .dash .card table { display: block; overflow-x: auto; }
+
+/* site map */
+.sitemap { aspect-ratio: 16 / 10; border-radius: 10px; overflow: hidden; }
+.map-legend { position: absolute; left: 12px; bottom: 26px; z-index: 3; display: flex; flex-wrap: wrap; gap: 12px; padding: 6px 10px;
+  border-radius: 8px; background: rgba(6, 16, 24, 0.78); color: #e8eff4; font-size: 12px; }
+.map-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.map-legend i { display: inline-block; width: 12px; height: 12px; border-radius: 50%; }
+.lg-pad { background: #ff5a4f; border: 2px solid #fff; }
+.lg-field { border: 2px dashed #fff; }
+.lg-pt { background: #ffdd57; width: 8px !important; height: 8px !important; }
+.lg-ell { border: 3px solid #ff9f43; border-radius: 50% / 35% !important; width: 16px !important; }
+textarea.wide { width: 100%; margin: 8px 0; }

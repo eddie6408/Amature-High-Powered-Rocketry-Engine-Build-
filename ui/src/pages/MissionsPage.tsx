@@ -7,6 +7,7 @@ import { LineChart, type Marker } from "../components/LineChart";
 import { fmt } from "../components/scale";
 import { Card, ErrorBox, KindBadge, NumberField, Progress, SelectField, Stat, TextField } from "../components/ui";
 import { go } from "../router";
+import type { Site } from "./SitesPage";
 
 interface SimRun { id: string; created: string; summary: Summary; events: Array<[number, string]>;
   series: Record<string, number[]>; notes: string[]; motor_quality: string }
@@ -105,8 +106,10 @@ function MissionView({ missionId, onSaved }: { missionId: string; onSaved: () =>
   const [n, setN] = useState(100);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [sites, setSites] = useState<Site[]>([]);
 
   useEffect(() => {
+    api.get<Site[]>("/api/sites").then(setSites).catch(() => undefined);
     api.get<VehicleSummary[]>("/api/vehicles").then(setVehicles);
     api.get<Motor[]>("/api/motors").then(setMotors);
     if (missionId === "new") setM(blank());
@@ -176,6 +179,21 @@ function MissionView({ missionId, onSaved }: { missionId: string; onSaved: () =>
                        options={[["", "—"], ...motors.map((q) => [q.key, `${q.manufacturer} ${q.designation} (${q.data_quality.toLowerCase()})`] as [string, string])]} />
         </div>
         <h3>Launch site</h3>
+        <div className="form grid-form">
+          <SelectField label="From the site library" value={m.site_id ?? ""}
+                       onChange={(id) => set((x) => {
+                         const st = sites.find((q) => q.id === id);
+                         x.site_id = id || undefined;
+                         if (!st) return;
+                         x.site.latitude = st.latitude; x.site.longitude = st.longitude;
+                         if (st.altitude_msl !== undefined) x.site.altitude_msl = st.altitude_msl;
+                         if (st.rail_length_m) x.site.rail_length = st.rail_length_m;
+                         if (st.waiver_ceiling_agl_m) x.limits.altitude_ceiling_agl_m = st.waiver_ceiling_agl_m;
+                         if (st.field_radius_m) x.limits.field_radius_m = st.field_radius_m;
+                       })}
+                       options={[["", sites.length ? "— (enter by hand)" : "no sites yet: add them in Launch sites"],
+                                 ...sites.map((q) => [q.id, q.name] as [string, string])]} />
+        </div>
         <div className="form grid-form">
           {([["altitude_msl", "Site altitude (MSL)", "m"], ["latitude", "Latitude", "°"], ["longitude", "Longitude", "°"],
              ["rail_length", "Rail length", "m"], ["elevation_deg", "Rail angle above horizontal", "°"],

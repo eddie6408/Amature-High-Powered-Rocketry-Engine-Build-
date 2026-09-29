@@ -50,9 +50,13 @@ class Mission:
         "gust_sigma_max": 1.5, "temperature_sigma_k": 5.0, "elevation_sigma_deg": 1.0,
         "azimuth_sigma_deg": 2.0})
 
+    site_id: str | None = None            # launch-site library entry the site/limits came from
+
     # ---- serialization ------------------------------------------------------------
     def to_dict(self) -> dict[str, Any]:
         d = dataclasses.asdict(self)
+        if d.get("site_id") is None:          # optional: older missions keep their hash
+            d.pop("site_id", None)
         return d
 
     @classmethod

@@ -151,6 +151,60 @@ class Workspace:
         except KeyError:
             raise WorkspaceError(f"unknown motor {key}") from None
 
+    # launch-site library ---------------------------------------------------------------------
+    SITE_FIELDS = {"name": str, "latitude": float, "longitude": float, "altitude_msl": float,
+                   "waiver_ceiling_agl_m": float, "waiver_ref": str, "field_radius_m": float,
+                   "rail_length_m": float, "club": str, "notes": str}
+
+    def list_sites(self) -> list[dict]:
+        p = self.root / "sites.json"
+        return json.loads(p.read_text()) if p.is_file() else []
+
+    def site(self, site_id: str) -> dict:
+        for s in self.list_sites():
+            if s["id"] == site_id:
+                return s
+        raise KeyError(site_id)
+
+    def save_site(self, data: dict) -> dict:
+        out: dict = {}
+        for k, typ in self.SITE_FIELDS.items():
+            v = data.get(k)
+            if v in (None, ""):
+                continue
+            try:
+                out[k] = typ(v)
+            except (TypeError, ValueError) as exc:
+                raise WorkspaceError(f"site {k}: {exc}") from exc
+        if not out.get("name"):
+            raise WorkspaceError("a site needs a name")
+        if "latitude" not in out or "longitude" not in out:
+            raise WorkspaceError("a site needs latitude and longitude")
+        if not (-90 <= out["latitude"] <= 90 and -180 <= out["longitude"] <= 180):
+            raise WorkspaceError("latitude must be -90..90 and longitude -180..180")
+        for k in ("waiver_ceiling_agl_m", "field_radius_m", "rail_length_m"):
+            if k in out and out[k] <= 0:
+                raise WorkspaceError(f"{k} must be positive")
+        with self.lock:
+            sites = self.list_sites()
+            sid = data.get("id") or _safe_name(out["name"].lower().replace(" ", "-"))[:40] or "site"
+            if not data.get("id"):
+                base, i = sid, 2
+                while any(x["id"] == sid for x in sites):
+                    sid, i = f"{base}-{i}", i + 1
+            out["id"] = sid
+            sites = [x for x in sites if x["id"] != sid] + [out]
+            _write_json(self.root / "sites.json", sorted(sites, key=lambda x: x["name"].lower()))
+        return out
+
+    def delete_site(self, site_id: str) -> dict:
+        with self.lock:
+            sites = self.list_sites()
+            if not any(x["id"] == site_id for x in sites):
+                raise KeyError(site_id)
+            _write_json(self.root / "sites.json", [x for x in sites if x["id"] != site_id])
+        return {"deleted": site_id}
+
     # flyer profile (name, organisation, member number, certification level)
     PROFILE_FIELDS = {"name": str, "organization": str, "member_number": str, "cert_level": int, "cert_org": str}
 

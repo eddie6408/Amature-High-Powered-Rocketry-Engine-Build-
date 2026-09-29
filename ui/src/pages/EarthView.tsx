@@ -8,12 +8,13 @@ import type * as CesiumType from "cesium";
 import { useEffect, useRef, useState } from "react";
 
 import { api, type Job } from "../api";
+import { circleOutline, type Dispersion, ellipseOutline, offsetToLatLon } from "../dispersion";
 import type { Shape } from "../components/Profile";
 import { fmt } from "../components/scale";
 
 type C = typeof CesiumType;
 type Cam = "pad" | "chase" | "overview";
-type Source = "satellite" | "google3d" | "map" | "relief";
+export type Source = "satellite" | "google3d" | "map" | "relief";
 
 interface Frames { t: number[]; east: number[]; north: number[]; up: number[]; speed: number[]; mach: number[]; thrust: number[];
   ax_e: number[]; ax_n: number[]; ax_u: number[]; phase: number[] }
@@ -22,13 +23,13 @@ interface Res { frames: Frames; phases: string[]; events: Array<[number, string]
 interface Pad { profile: Shape[]; length_m: number; diameter_m: number; site: { rail_length: number } }
 interface Wx { rail_elevation_deg: number; launch_into_wind: boolean; rail_azimuth_deg: number; wind_from_deg: number }
 export interface EarthProps { res: Res | null; pad: Pad | null; t: number; stage: string; tMinus: number; weather: Wx;
-  location: { latitude: number; longitude: number; altitude_msl: number } | null }
+  location: { latitude: number; longitude: number; altitude_msl: number } | null; dispersion?: Dispersion | null }
 
-const SOURCES: Array<[Source, string]> = [["satellite", "Satellite"], ["google3d", "Google 3D"], ["map", "Street map"], ["relief", "Terrain only (offline)"]];
+export const SOURCES: Array<[Source, string]> = [["satellite", "Satellite"], ["google3d", "Google 3D"], ["map", "Street map"], ["relief", "Terrain only (offline)"]];
 
 /* ------------------------------------------------------------------ loading */
 let loading: Promise<C> | null = null;
-function loadCesium(): Promise<C> {
+export function loadCesium(): Promise<C> {
   const w = window as unknown as { Cesium?: C; CESIUM_BASE_URL?: string };
   if (w.Cesium) return Promise.resolve(w.Cesium);
   loading ??= new Promise<C>((resolve, reject) => {
@@ -46,10 +47,10 @@ function loadCesium(): Promise<C> {
   return loading;
 }
 
-function stored(key: string, fallback: string): string {
+export function stored(key: string, fallback: string): string {
   try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; }
 }
-function store(key: string, v: string) {
+export function store(key: string, v: string) {
   try { localStorage.setItem(key, v); } catch { /* not remembered in private windows */ }
 }
 
@@ -77,7 +78,7 @@ async function terrariumTile(z: number, x: number, y: number): Promise<Float32Ar
 }
 
 const HM = 65;                                              // heightmap samples per tile edge
-function terrainProvider(Cesium: C, onMissing: () => void): CesiumType.TerrainProvider {
+export function terrainProvider(Cesium: C, onMissing: () => void): CesiumType.TerrainProvider {
   return new Cesium.CustomHeightmapTerrainProvider({
     width: HM, height: HM, tilingScheme: new Cesium.WebMercatorTilingScheme(),
     credit: "Terrain: Mapzen / AWS Terrain Tiles",
@@ -100,6 +101,66 @@ function terrainProvider(Cesium: C, onMissing: () => void): CesiumType.TerrainPr
       return out;
     },
   });
+}
+
+export function imageryFor(Cesium: C, source: Source): CesiumType.ImageryProvider | null {
+  if (source === "satellite") {
+    return new Cesium.UrlTemplateImageryProvider({
+      url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+      maximumLevel: 19, credit: "Imagery: Esri, Maxar, Earthstar Geographics, and the GIS User Community" });
+  }
+  if (source === "map") {
+    return new Cesium.UrlTemplateImageryProvider({ url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png", maximumLevel: 19,
+      credit: "© OpenStreetMap contributors" });
+  }
+  return null;
+}
+
+/** Sun-shaded relief for when there is no imagery: mid-morning sun at the site. */
+export function shadeRelief(Cesium: C, viewer: CesiumType.Viewer, longitude: number) {
+  const d = new Date();
+  const h = 10 - longitude / 15;
+  d.setUTCHours(Math.floor(h), Math.round((h % 1) * 60), 0, 0);
+  viewer.clock.currentTime = Cesium.JulianDate.fromDate(d);
+  viewer.clock.shouldAnimate = false;
+  viewer.scene.globe.enableLighting = true;
+  viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#7c8f5a");
+}
+
+/** Monte Carlo landing points, the 95 % ellipse and the recovery-field circle, clamped to the ground. */
+export function dispersionLayer(Cesium: C, lat: number, lon: number, d: Dispersion | null, fieldRadius: number | null): CesiumType.CustomDataSource {
+  const ds = new Cesium.CustomDataSource("dispersion");
+  const pos = ([e, n]: [number, number]) => { const [la, lo] = offsetToLatLon(lat, lon, e, n); return Cesium.Cartesian3.fromDegrees(lo, la); };
+  const line = (pts: Array<[number, number]>, color: string, width: number, dashed = false) => ds.entities.add({
+    polyline: { positions: pts.map(pos), width, clampToGround: true,
+      material: dashed ? new Cesium.PolylineDashMaterialProperty({ color: Cesium.Color.fromCssColorString(color), dashLength: 16 })
+                       : Cesium.Color.fromCssColorString(color) } });
+  if (fieldRadius) {
+    line(circleOutline(fieldRadius), "#ffffff", 2, true);
+    const [la, lo] = offsetToLatLon(lat, lon, 0, fieldRadius);
+    ds.entities.add({ position: Cesium.Cartesian3.fromDegrees(lo, la), label: { text: `Recovery field ${Math.round(fieldRadius)} m`,
+      font: "600 12px Inter, system-ui, sans-serif", fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.fromCssColorString("#061018"),
+      outlineWidth: 3, style: Cesium.LabelStyle.FILL_AND_OUTLINE, heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+      pixelOffset: new Cesium.Cartesian2(0, -10), disableDepthTestDistance: Number.POSITIVE_INFINITY } });
+  }
+  if (d) {
+    for (const p of d.points) {
+      ds.entities.add({ position: pos(p), point: { pixelSize: 5, color: Cesium.Color.fromCssColorString("#ffdd57").withAlpha(0.85),
+        outlineColor: Cesium.Color.fromCssColorString("#061018"), outlineWidth: 1, heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY } });
+    }
+    if (d.ellipse) {
+      line(ellipseOutline(d.ellipse), "#ff9f43", 3);
+      const top = ellipseOutline(d.ellipse).reduce((a, b) => (b[1] > a[1] ? b : a));
+      ds.entities.add({ position: pos(top),
+        label: { text: `${Math.round(d.ellipse.confidence * 100)} % landing ellipse`, font: "600 12px Inter, system-ui, sans-serif",
+          fillColor: Cesium.Color.fromCssColorString("#ff9f43"), outlineColor: Cesium.Color.fromCssColorString("#061018"), outlineWidth: 3,
+          style: Cesium.LabelStyle.FILL_AND_OUTLINE, heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+          verticalOrigin: Cesium.VerticalOrigin.BOTTOM, pixelOffset: new Cesium.Cartesian2(0, -6),
+          disableDepthTestDistance: Number.POSITIVE_INFINITY } });
+    }
+  }
+  return ds;
 }
 
 /* --------------------------------------------------------------- frame helpers */
@@ -144,15 +205,7 @@ export function EarthView(props: EarthProps) {
     loadCesium().then(async (Cesium) => {
       if (disposed || !host.current) return;
       cesiumRef.current = Cesium;
-      let imagery: CesiumType.ImageryProvider | null = null;
-      if (source === "satellite") {
-        imagery = new Cesium.UrlTemplateImageryProvider({
-          url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-          maximumLevel: 19, credit: "Imagery: Esri, Maxar, Earthstar Geographics, and the GIS User Community" });
-      } else if (source === "map") {
-        imagery = new Cesium.UrlTemplateImageryProvider({ url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png", maximumLevel: 19,
-          credit: "© OpenStreetMap contributors" });
-      }
+      const imagery = imageryFor(Cesium, source);
       const terrain = source === "google3d" ? new Cesium.EllipsoidTerrainProvider()
         : terrainProvider(Cesium, () => { if (!missingTerrain) { missingTerrain = true; setWarn("Some terrain tiles are not cached and can't be downloaded (no internet?). The ground is drawn flat there."); } });
       viewer = new Cesium.Viewer(host.current, {
@@ -164,20 +217,11 @@ export function EarthView(props: EarthProps) {
       viewerRef.current = viewer;
       const scene = viewer.scene;
       scene.globe.baseColor = Cesium.Color.fromCssColorString("#2c3b2a");
-      const shadeRelief = () => {                              // sun-shaded relief, mid-morning sun at the site
-        const d = new Date();
-        const h = 10 - loc.longitude / 15;
-        d.setUTCHours(Math.floor(h), Math.round((h % 1) * 60), 0, 0);
-        viewer!.clock.currentTime = Cesium.JulianDate.fromDate(d);
-        viewer!.clock.shouldAnimate = false;
-        scene.globe.enableLighting = true;
-        scene.globe.baseColor = Cesium.Color.fromCssColorString("#7c8f5a");
-      };
-      if (source === "relief") shadeRelief();
+      if (source === "relief") shadeRelief(Cesium, viewer, loc.longitude);
       scene.globe.depthTestAgainstTerrain = true;
       scene.fog.enabled = true;
       if (scene.skyAtmosphere) scene.skyAtmosphere.show = true;
-      imagery?.errorEvent.addEventListener(() => shadeRelief());
+      imagery?.errorEvent.addEventListener(() => shadeRelief(Cesium, viewer!, loc.longitude));
       imagery?.errorEvent.addEventListener(() => setWarn("Map imagery can't be loaded (no internet?). Terrain and the flight are still shown; "
         + "cache the terrain beforehand for the field."));
       if (source === "google3d") {
@@ -211,6 +255,15 @@ export function EarthView(props: EarthProps) {
       viewerRef.current = null;
     };
   }, [locKey, source, googleKey]);
+
+  // Monte Carlo landing points and ellipse for this mission, around the pad
+  useEffect(() => {
+    const v = viewerRef.current, Cesium = cesiumRef.current;
+    if (!v || !Cesium || !loc) return;
+    const ds = dispersionLayer(Cesium, loc.latitude, loc.longitude, props.dispersion ?? null, props.dispersion?.field_radius_m ?? null);
+    v.dataSources.add(ds);
+    return () => { if (!v.isDestroyed()) v.dataSources.remove(ds, true); };
+  }, [props.dispersion, status, locKey]);
 
   // camera input: free orbit only in the overview
   useEffect(() => {

@@ -78,6 +78,11 @@ class App:
         r("POST", r"/api/tiles/terrain/prefetch", lambda q, b: {"job": self.jobs.start(
             "terrain", lambda p: {"summary": tiles.prefetch(float(b["lat"]), float(b["lon"]), float(b.get("radius_km", 5)),
                                                             int(b.get("max_zoom", 14)), p)})})
+        r("GET", r"/api/sites", lambda q, b: ws_.list_sites())
+        r("POST", r"/api/sites", lambda q, b: ws_.save_site(b))
+        r("DELETE", r"/api/sites/(?P<sid>[^/]+)", lambda q, b, sid: ws_.delete_site(sid))
+        r("POST", r"/api/missions/(?P<mid>[^/]+)/apply-site", lambda q, b, mid: svc.apply_site(ws_, mid, str(b.get("site_id", ""))))
+        r("GET", r"/api/missions/(?P<mid>[^/]+)/dispersion", lambda q, b, mid: svc.dispersion(ws_, mid))
         r("GET", r"/api/profile", lambda q, b: ws_.profile())
         r("PUT", r"/api/profile", lambda q, b: ws_.save_profile(b))
         r("POST", r"/api/missions/(?P<mid>[^/]+)/flight-card", lambda q, b, mid: svc.flight_card(ws_, mid, b.get("conditions")))
@@ -185,6 +190,9 @@ def make_handler(app: App, ui_dir: Path = UI_DIST):
 
         def do_PUT(self):  # noqa: N802
             self._api("PUT")
+
+        def do_DELETE(self):  # noqa: N802
+            self._api("DELETE")
 
         def do_GET(self):  # noqa: N802
             path = urlparse(self.path).path

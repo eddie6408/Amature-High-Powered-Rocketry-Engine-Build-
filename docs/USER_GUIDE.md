@@ -200,6 +200,21 @@ Readiness is an engineering aid. The RSO makes the final call under your safety 
 These are checklist aids. Your club's code, the range, the FAA waiver and the RSO take
 precedence.
 
+## Launch sites
+
+**Launch sites** keeps your fields: name, club, coordinates (or *Use my location* while standing
+at the pad), pad altitude, the FAA waiver ceiling and its COA reference, the recovery-field
+radius, rail length and notes.
+
+* **Apply to a mission.** Choose a site on the mission page (*From the site library*), or pick a
+  mission on the site page and press *Apply*. This copies the position, rail length, waiver
+  ceiling and field radius into the mission. Readiness and the flight card then check against
+  them. Re-run the simulations afterwards.
+* **Site map.** The field circle, the pad, and the mission's latest Monte Carlo landing points with
+  the 95 % landing ellipse, drawn on the terrain. The page also tells you what share of the
+  simulated landings fall inside the field. The launch simulator's Earth view draws the same
+  overlay around the pad.
+
 ## 5. Fly: launch day with the ground station
 
 1. **Analyse → + New** creates the flight record: flight ID, mission, the revision and motor

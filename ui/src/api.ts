@@ -22,6 +22,7 @@ export const api = {
   get: <T>(p: string) => call<T>("GET", p),
   post: <T>(p: string, b: unknown = {}) => call<T>("POST", p, b),
   put: <T>(p: string, b: unknown) => call<T>("PUT", p, b),
+  del: <T>(p: string) => call<T>("DELETE", p),
 };
 
 export async function fileToBase64(f: File): Promise<string> {
@@ -62,5 +63,5 @@ export interface Motor { key: string; designation: string; manufacturer: string;
   data_quality: string }
 export interface Mission { id: string; name: string; vehicle_id: string; revision: string; motor_key: string;
   site: Record<string, number>; wind: Record<string, unknown>; atmosphere: Record<string, number>;
-  limits: Record<string, number | null>; uncertainty: Record<string, number> }
+  limits: Record<string, number | null>; uncertainty: Record<string, number>; site_id?: string }
 export type Summary = Record<string, number | string | null>;

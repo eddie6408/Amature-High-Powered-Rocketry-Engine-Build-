@@ -345,6 +345,39 @@ def readiness(ws: Workspace, mission_id: str) -> dict:
     return ws.run(run_id)
 
 
+# ---------------------------------------------------------------------------- launch sites
+def apply_site(ws: Workspace, mission_id: str, site_id: str) -> dict:
+    """Copy a library site (position, rail, waiver ceiling, field radius) into a mission."""
+    site = ws.site(site_id)
+    m = ws.mission(mission_id)
+    m.site = {**m.site, "latitude": site["latitude"], "longitude": site["longitude"],
+              "altitude_msl": site.get("altitude_msl", m.site.get("altitude_msl", 0.0))}
+    if site.get("rail_length_m"):
+        m.site["rail_length"] = site["rail_length_m"]
+    if site.get("waiver_ceiling_agl_m"):
+        m.limits.altitude_ceiling_agl_m = site["waiver_ceiling_agl_m"]
+    if site.get("field_radius_m"):
+        m.limits.field_radius_m = site["field_radius_m"]
+    m.site_id = site_id
+    ws.save_mission(m)
+    return ws.mission(mission_id).to_dict()
+
+
+def dispersion(ws: Workspace, mission_id: str) -> dict:
+    """Latest Monte Carlo landing points and 95 % ellipse for a mission, for the maps."""
+    m = ws.mission(mission_id)
+    runs = ws.list_runs(m.id, "montecarlo")
+    out: dict[str, Any] = {"site": m.site, "field_radius_m": m.limits.field_radius_m, "points": [], "ellipse": None,
+                           "run_id": None, "current": False}
+    if runs:
+        r = ws.run(runs[0]["id"])
+        out.update(points=[p for p in r.get("landing", []) if p and None not in p],
+                   ellipse=(r.get("report") or {}).get("landing_dispersion"), run_id=r["id"],
+                   created=r.get("created"), current=r.get("hashes") == mission_hashes(ws, m),
+                   runs=(r.get("summary") or {}).get("runs"))
+    return _clean(out)
+
+
 # ----------------------------------------------------------------------------- dashboard
 def dashboard(ws: Workspace) -> dict:
     """Overview of the project: missions and their review state, flights against prediction,
