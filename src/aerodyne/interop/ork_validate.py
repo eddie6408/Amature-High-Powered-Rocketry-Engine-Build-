@@ -51,12 +51,29 @@ def _at_mach(sim: OrSimulation, key: str, mach: float) -> float | None:
     if key not in c or "Mach number" not in c:
         return None
     m, v = c["Mach number"], c[key]
-    i_peak = int(np.nanargmax(m))
-    sel = np.arange(i_peak + 1)                       # ascent / boost only
-    ok = sel[np.isfinite(v[sel]) & np.isfinite(m[sel]) & (m[sel] > 0.02)]
-    if len(ok) == 0:
+    # the FIRST time the vehicle reaches this Mach: on a multi-stage rocket later samples
+    # may be after separation, when OpenRocket reports the upper stage alone
+    hits = np.nonzero(np.isfinite(m) & (m >= mach))[0]
+    end = int(hits[0]) if len(hits) else int(np.nanargmax(m))
+    ok = [i for i in range(end + 1) if np.isfinite(v[i]) and np.isfinite(m[i]) and m[i] > 0.02]
+    if not ok:
         return None
-    return float(v[ok[np.argmin(np.abs(m[ok] - mach))]])
+    return float(v[min(ok, key=lambda i: abs(m[i] - mach))])
+
+
+def _coast_value(sim: OrSimulation, key: str, mach: float) -> float | None:
+    """Value at the coast-phase sample (after peak Mach, no thrust) nearest ``mach``."""
+    c = sim.columns
+    if key not in c or "Mach number" not in c:
+        return None
+    m = c["Mach number"]
+    thrust = c.get("Thrust", np.zeros_like(m))
+    i_peak = int(np.nanargmax(m))
+    idx = [i for i in range(i_peak, len(m)) if thrust[i] == 0 and np.isfinite(m[i]) and np.isfinite(c[key][i])
+           and m[i] > 0.05]
+    if not idx:
+        return None
+    return float(c[key][min(idx, key=lambda i: abs(m[i] - mach))])
 
 
 def validate(path: str | Path, mach: float = 0.3) -> dict:
@@ -90,16 +107,29 @@ def validate(path: str | Path, mach: float = 0.3) -> dict:
         add("CG with motor, t=0", full.cg, float(c.get("CG location", [math.nan])[0]), "m",
             "motor CG assumed at the middle of its slot")
     try:
-        _, xcp, _ = barrowman_cp(v, mach)
-        add(f"CP at Mach {mach}", xcp, _at_mach(sim, "CP location", mach), "m")
+        # earliest valid sample after liftoff: the complete stack is still together
+        m_c, cp_c = c.get("Mach number"), c.get("CP location")
+        first = None if m_c is None or cp_c is None else next(
+            (i for i in range(len(m_c)) if np.isfinite(cp_c[i]) and np.isfinite(m_c[i]) and m_c[i] > 0.02), None)
+        if first is not None:
+            m0 = float(m_c[first])
+            _, xcp, _ = barrowman_cp(v, m0)
+            add(f"CP at liftoff (Mach {m0:.2f})", xcp, float(cp_c[first]), "m", "full stack, first sample after liftoff")
     except ValueError:
         pass
     try:
         aero = AnalyticalAeroModel(v)
         rey = _at_mach(sim, "Reynolds number", mach)
-        cd_or = _at_mach(sim, "Axial drag coefficient", mach) or _at_mach(sim, "Drag coefficient", mach)
-        add(f"Zero-lift Cd at Mach {mach}", aero.zero_lift_cd(mach, (rey or 5e6 * v.length) / v.length, False),
-            cd_or, "-", "OpenRocket value is during boost (base drag reduced by thrust)")
+        cd_or = _coast_value(sim, "Drag coefficient", mach)
+        a_or = _coast_value(sim, "Reference area", mach)
+        note = "coast phase (motor off)"
+        if cd_or is not None and a_or and abs(a_or / aero.reference_area - 1) > 0.01:
+            cd_or *= a_or / aero.reference_area
+            note += f"; OpenRocket Cd rescaled to AERODYNE's reference area (x{a_or / aero.reference_area:.3f})"
+        ref_len = _coast_value(sim, "Reference length", mach)
+        rey_c = _coast_value(sim, "Reynolds number", mach)
+        re_m = rey_c / ref_len if rey_c and ref_len else (rey or 5e6 * v.length) / v.length
+        add(f"Zero-lift Cd at Mach {mach}", aero.zero_lift_cd(mach, re_m, False), cd_or, "-", note)
     except ValueError:
         pass
     return result

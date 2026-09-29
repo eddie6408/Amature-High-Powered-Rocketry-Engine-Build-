@@ -65,7 +65,9 @@ def review(design: Design, motor: MotorPerformance, limits: Limits, nominal: Sim
     m_min = s["min_stability_margin_cal"]
     add(Check("margin_rail", "Static margin at rail exit",
               "PASS" if m_rail >= limits.min_margin_cal else "FAIL", f"{m_rail:.2f} cal",
-              f"≥ {limits.min_margin_cal:.2f} cal", True, "ESTIMATED (Barrowman / aero model)",
+              f"≥ {limits.min_margin_cal:.2f} cal", True,
+              "ESTIMATED (Barrowman). Cross-check: AERODYNE's CP averaged ~6 % aft of OpenRocket's "
+              "on its example designs - verify marginal designs with a second tool",
               "" if m_rail >= limits.min_margin_cal else "add nose weight or enlarge/move fins aft"))
     if m_min is not None:
         st = ("FAIL" if m_min < limits.min_margin_cal else

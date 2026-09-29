@@ -99,3 +99,25 @@ def test_vehicle_roundtrip_and_validation():
     assert v2.config_hash == v.config_hash
     assert v.validate() == []
     assert "no fin set" in " ".join(Vehicle("x").validate())
+
+
+def test_fin_edge_shape_and_internal_tubes_in_drag():
+    """Square fin edges see stagnation + base pressure; internal tubes are not wetted
+    and do not set the base diameter (both found by cross-checking OpenRocket)."""
+    from aerodyne.vehicle import BodyTube
+
+    v = example_vehicle()
+    rounded = AnalyticalAeroModel(v).drag_breakdown(0.3, 6e6)
+    for f in v.fin_sets():
+        f.cross_section = "square"
+    square = AnalyticalAeroModel(v).drag_breakdown(0.3, 6e6)
+    assert square["pressure"] > rounded["pressure"] and square["friction"] == pytest.approx(rounded["friction"])
+    for f in v.fin_sets():
+        f.cross_section = "airfoil"
+    assert AnalyticalAeroModel(v).drag_breakdown(0.3, 6e6)["pressure"] < rounded["pressure"]
+    base_before = AnalyticalAeroModel(v).drag_breakdown(0.3, 6e6)
+    v.add(BodyTube("long motor tube", x=1.0, length_=0.4, outer_diameter=0.041, wall_thickness=0.001,
+                   material="cardboard", tags={"internal"}))
+    after = AnalyticalAeroModel(v).drag_breakdown(0.3, 6e6)
+    assert after["friction"] == pytest.approx(base_before["friction"])
+    assert v.aft_diameter() == pytest.approx(0.066)

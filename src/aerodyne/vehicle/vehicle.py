@@ -37,7 +37,8 @@ class Vehicle:
     @property
     def length(self) -> float:
         return max((c.x + c.length for c in self.components
-                    if isinstance(c, (NoseCone, BodyTube, Transition))), default=0.0)
+                    if isinstance(c, (NoseCone, BodyTube, Transition)) and "internal" not in c.tags),
+                   default=0.0)
 
     @property
     def reference_diameter(self) -> float:
@@ -69,8 +70,8 @@ class Vehicle:
 
     def aft_diameter(self) -> float:
         """Diameter at the aft end (for base drag)."""
-        aft = max((c for c in self.components if isinstance(c, (BodyTube, Transition, NoseCone))),
-                  key=lambda c: c.x + c.length)
+        aft = max((c for c in self.components if isinstance(c, (BodyTube, Transition, NoseCone))
+                   and "internal" not in c.tags), key=lambda c: c.x + c.length)
         if isinstance(aft, BodyTube):
             return aft.outer_diameter
         if isinstance(aft, Transition):

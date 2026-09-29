@@ -94,7 +94,8 @@ def test_cross_validation_against_stored_openrocket_data(tmp_path):
     rows = {r["quantity"].split(" (")[0]: r for r in res["rows"]}
     assert res["simulation"] == "Sim A"
     assert rows["Dry mass"]["openrocket"] == pytest.approx(1.0) and rows["Dry mass"]["relative"] == pytest.approx(0, abs=1e-9)
-    assert rows["CP at Mach 0.3"]["openrocket"] == pytest.approx(0.84)      # boost sample nearest Mach 0.3
+    cp = next(r for k, r in rows.items() if k.startswith("CP at liftoff"))
+    assert cp["openrocket"] == pytest.approx(0.83)                         # first sample after liftoff
     assert "OpenRocket cross-validation" in render(res)
     plain = validate(DATA / "dual_deploy.ork.xml")
     assert plain["rows"] == [] and "no stored OpenRocket simulation data" in plain["note"]

@@ -179,6 +179,7 @@ class FinSet(Component):
     body_radius: float = 0.05      # radius of the tube the fins attach to
     material: str | Material = "g10"
     cant_deg: float = 0.0
+    cross_section: str = "rounded"   # square | rounded | airfoil (edge shape, drives pressure drag)
 
     @property
     def length(self) -> float:

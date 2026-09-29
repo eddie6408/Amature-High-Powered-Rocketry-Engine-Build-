@@ -46,6 +46,7 @@ COMPONENTS = {
         {"name": "sweep", "label": "Leading-edge sweep", "type": _N, "unit": "m"},
         {"name": "thickness", "label": "Thickness", "type": _N, "unit": "m"},
         {"name": "body_radius", "label": "Body radius at fins", "type": _N, "unit": "m"},
+        {"name": "cross_section", "label": "Edge shape", "type": "select", "options": ["rounded", "square", "airfoil"]},
         MATERIAL_FIELD]},
     "Bulkhead": {"label": "Bulkhead", "fields": [
         {"name": "diameter", "label": "Diameter", "type": _N, "unit": "m"},

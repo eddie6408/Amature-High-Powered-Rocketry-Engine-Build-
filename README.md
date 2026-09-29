@@ -98,7 +98,7 @@ curve. It shows how the tools fit together; it is not a flight-ready design.
 | Digital twin + post-flight validation + calibration proposals | `aerodyne.twin` | ✅ |
 | Reporting (Markdown) | `aerodyne.reporting` | ✅ |
 | CAD integration: STEP (exact B-rep via OpenCASCADE/gmsh), STL, Fusion/SolidWorks/FreeCAD mass-property CSV; upload in the designer | `aerodyne.cad` | ✅ STEP needs `pip install ".[cad]"` |
-| OpenRocket `.ork` import + cross-validation against OpenRocket's own stored mass/CG/CP/Cd (`aerodyne validate-ork`) | `aerodyne.interop` | ✅ all 22 example files from the OpenRocket repository import; pods, tube fins and parallel stages reported as unsupported |
+| OpenRocket `.ork` import + cross-validation against OpenRocket's own stored mass/CG/CP/Cd (`aerodyne validate-ork`) | `aerodyne.interop` | ✅ all 22 example files from the OpenRocket repository import; vs OpenRocket on files with supported parts: CP within +10 % (avg ~6 % aft), dry mass/CG within a few % (weighed values honoured), zero-lift Cd mean ±18 %; pods, tube fins, parallel stages reported as unsupported |
 | Digital-twin loop: flight → calibration proposal → adopted as a new revision used by later simulations, with history | `aerodyne.app.services`, Design/Analyse pages | ✅ |
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for interfaces and data flow and

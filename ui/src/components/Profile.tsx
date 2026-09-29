@@ -13,11 +13,15 @@ export function Profile({ shapes, cg, cgSpent, cp, length }: {
   const y = (v: number) => H / 2 - v * scale;
   const order = ["internal", "body", "fin", "motor", "mass"];
   const sorted = [...shapes].sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind));
+  const close = cg !== undefined && cp !== undefined && Math.abs(x(cg) - x(cp)) < 110;
+  const anchor = (cls: string) => (!close ? "middle" : cls === "mark-cp" ? ((cp ?? 0) >= (cg ?? 0) ? "start" : "end")
+    : cls === "mark-cg" ? ((cp ?? 0) >= (cg ?? 0) ? "end" : "start") : "middle");
   const mark = (pos: number | undefined, label: string, cls: string, dy: number) =>
     pos === undefined ? null : (
       <g className={cls}>
         <line x1={x(pos)} x2={x(pos)} y1={16} y2={H - 16} />
-        <text x={x(pos)} y={dy} textAnchor="middle">{label} {fmt(pos, 3)} m</text>
+        <text x={x(pos) + (anchor(cls) === "start" ? 4 : anchor(cls) === "end" ? -4 : 0)} y={dy}
+              textAnchor={anchor(cls)}>{label} {fmt(pos, 3)} m</text>
       </g>
     );
   return (

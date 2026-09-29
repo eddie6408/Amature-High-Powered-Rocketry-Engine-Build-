@@ -91,6 +91,22 @@ def _le_pressure_cd(mach: float) -> float:
     return 1.214 - 0.502 / mach ** 2 + 0.1095 / mach ** 4
 
 
+def _stagnation_cd(mach: float) -> float:
+    """Pressure coefficient on a blunt face (stagnation), subsonic/supersonic fit."""
+    if mach < 1.0:
+        return 0.85 * (1 + mach * mach / 4 + mach ** 4 / 40)
+    return 0.85 * (1.84 - 0.76 / mach ** 2 + 0.166 / mach ** 4 + 0.035 / mach ** 6)
+
+
+def _fin_edge_cd(section: str, mach: float) -> float:
+    """Leading + trailing edge pressure drag per unit fin frontal area."""
+    if section == "square":
+        return _stagnation_cd(mach) + _base_cd(mach)
+    if section == "airfoil":
+        return _le_pressure_cd(mach)                       # rounded LE, sharp TE
+    return _le_pressure_cd(mach) + 0.5 * _base_cd(mach)    # rounded LE and TE
+
+
 def _smoothstep(x: float, x0: float, x1: float) -> float:
     u = min(max((x - x0) / (x1 - x0), 0.0), 1.0)
     return u * u * (3 - 2 * u)
@@ -120,7 +136,8 @@ class AnalyticalAeroModel:
         v = self.vehicle
         self._length = v.length
         self._fineness = self._length / self.reference_diameter
-        wet = sum(math.pi * b.outer_diameter * b.length_ for b in v.bodies())
+        # only airframe surfaces see the flow - internal tubes (motor mounts) are excluded
+        wet = sum(math.pi * b.outer_diameter * b.length_ for b in v.bodies() if "internal" not in b.tags)
         n = v.nose()
         if n is not None:
             wet += math.pi * n.diameter / 2 * math.hypot(n.length_, n.diameter / 2) * 1.1
@@ -130,11 +147,13 @@ class AnalyticalAeroModel:
         self._wet_body = wet
         self._wet_fins = sum(2 * f.count * f.planform_area for f in v.fin_sets())
         self._fin_frontal = sum(f.count * f.span * f.thickness for f in v.fin_sets())
+        self._fin_frontal_by_section = [(f.count * f.span * f.thickness, f.cross_section) for f in v.fin_sets()]
         self._fin_tc = max((f.thickness / f.root_chord for f in v.fin_sets()), default=0.0)
         self._mac = max((f.root_chord for f in v.fin_sets()), default=0.1)
         self._base_area = math.pi * v.aft_diameter() ** 2 / 4
 
-    def zero_lift_cd(self, mach: float, reynolds_per_m: float, thrusting: bool = False) -> float:
+    def drag_breakdown(self, mach: float, reynolds_per_m: float, thrusting: bool = False) -> dict[str, float]:
+        """Zero-lift drag split into friction, pressure and base (same split OpenRocket reports)."""
         a_ref = self.reference_area
         rough = self.vehicle.surface_roughness
         cf_b = _skin_friction(reynolds_per_m * self._length, rough / self._length, mach)
@@ -147,11 +166,14 @@ class AnalyticalAeroModel:
             # motor exhaust fills the nozzle area; approximate with motor case area
             base_area = max(0.0, base_area - math.pi * self.vehicle.motor_slot.motor_diameter ** 2 / 4)
         cd_base = _base_cd(mach) * base_area / a_ref
-        cd_fin_p = (_le_pressure_cd(mach) + _base_cd(mach)) * self._fin_frontal / a_ref
+        cd_fin_p = sum(area * _fin_edge_cd(sec, mach) for area, sec in self._fin_frontal_by_section) / a_ref
         nose = self.vehicle.nose()
         cd_nose = _nose_wave_cd(nose, mach) * (nose.diameter / self.reference_diameter) ** 2 if nose else 0
         cd_para = 1.2 * self.vehicle.launch_lug_drag_area / a_ref
-        return cd_fric + cd_base + cd_fin_p + cd_nose + cd_para
+        return {"friction": cd_fric, "pressure": cd_fin_p + cd_nose + cd_para, "base": cd_base}
+
+    def zero_lift_cd(self, mach: float, reynolds_per_m: float, thrusting: bool = False) -> float:
+        return sum(self.drag_breakdown(mach, reynolds_per_m, thrusting).values())
 
     def coefficients(self, cond: FlightCondition) -> AeroCoefficients:
         cna, xcp, parts = barrowman_cp(self.vehicle, cond.mach)

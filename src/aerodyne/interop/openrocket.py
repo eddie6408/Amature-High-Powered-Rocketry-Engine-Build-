@@ -331,7 +331,9 @@ class _Builder:
                     self.warnings.append(f"'{name}': {note}; skipped")
                     return
                 self.warnings.append(f"'{name}': {note} (ESTIMATED)")
+            sec = (el.findtext("crosssection") or "square").strip()
             c = FinSet(name, x=x, count=int(_f(el, "fincount", 3)), root_chord=root,
+                       cross_section=sec if sec in ("square", "rounded", "airfoil") else "square",
                        tip_chord=tip, span=span,
                        sweep=sweep, thickness=_f(el, "thickness", 0.003),
                        body_radius=parent_r if parent_r == parent_r else 0.0,
@@ -481,6 +483,15 @@ def read_ork(path: str | Path) -> OrkImport:
         raise ValueError("not an OpenRocket document")
     b = _Builder()
     b.build(root)
+    # surface finish (OpenRocket's roughness values), taken from the body components
+    rough = {"rough": 500e-6, "unfinished": 150e-6, "normal": 60e-6, "smooth": 20e-6,
+             "finishpolished": 2e-6, "polished": 2e-6, "optimum": 0.5e-6}
+    fins = [(el.findtext("finish") or "").strip().lower() for el in root.iter()
+            if el.tag in ("bodytube", "nosecone", "transition") and el.findtext("finish")]
+    if fins:
+        vals = [rough.get(f) for f in fins if f in rough]
+        if vals:
+            b.v.surface_roughness = float(sorted(vals)[len(vals) // 2])
     problems = b.v.validate()
     b.warnings += [f"design check: {p}" for p in problems]
     rec = RecoveryConfig(devices=tuple(b.chutes)) if b.chutes else None
