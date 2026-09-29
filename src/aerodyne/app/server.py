@@ -20,9 +20,11 @@ from urllib.parse import parse_qs, urlparse
 
 from aerodyne.app import services as svc
 from aerodyne.app.ground_session import GroundSession
+from aerodyne.environment import tiles
 from aerodyne.reporting.reports import flight_report
 from aerodyne.workspace import Workspace, WorkspaceError
 
+TILE_RE = re.compile(r"^/api/tiles/terrain/(\d+)/(\d+)/(\d+)\.png$")
 UI_DIST = Path(__file__).resolve().parents[3] / "ui" / "dist"
 MAX_BODY = 64 * 1024 * 1024
 
@@ -70,6 +72,9 @@ class App:
         r("GET", r"/api/missions/(?P<mid>[^/]+)/pad", lambda q, b, mid: svc.launch_pad(ws_, mid))
         r("POST", r"/api/missions/(?P<mid>[^/]+)/launch", lambda q, b, mid: svc.launch_simulation(
             ws_, mid, b.get("weather", {}), b.get("motor_key"), int(b.get("seed", 1)), location=b.get("location")))
+        r("POST", r"/api/tiles/terrain/prefetch", lambda q, b: {"job": self.jobs.start(
+            "terrain", lambda p: {"summary": tiles.prefetch(float(b["lat"]), float(b["lon"]), float(b.get("radius_km", 5)),
+                                                            int(b.get("max_zoom", 14)), p)})})
         r("GET", r"/api/weather/live", lambda q, b: svc.live_weather(float(q["lat"]), float(q["lon"])))
         r("POST", r"/api/missions/(?P<mid>[^/]+)/readiness", lambda q, b, mid: svc.readiness(ws_, mid))
         r("GET", r"/api/runs", lambda q, b: ws_.list_runs(q.get("mission"), q.get("kind")))
@@ -136,6 +141,18 @@ def make_handler(app: App, ui_dir: Path = UI_DIST):
             self.end_headers()
             self.wfile.write(body)
 
+        def _tile(self, z: int, x: int, y: int) -> None:
+            try:
+                data, _ = tiles.terrain_tile(z, x, y)
+            except (tiles.TileUnavailable, ValueError) as exc:
+                return self._send(404, str(exc).encode(), "text/plain")
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "public, max-age=604800")
+            self.end_headers()
+            self.wfile.write(data)
+
         def _json(self, code: int, obj: Any) -> None:
             self._send(code, json.dumps(obj, default=str).encode(), "application/json")
 
@@ -167,10 +184,24 @@ def make_handler(app: App, ui_dir: Path = UI_DIST):
             path = urlparse(self.path).path
             if path in ("/api/stream", "/api/ground/stream"):
                 return self._stream()
+            m = TILE_RE.match(path)
+            if m:
+                return self._tile(*(int(v) for v in m.groups()))
             if path.startswith("/api/"):
                 return self._api("GET")
             rel = "index.html" if path in ("", "/") else path.lstrip("/")
             f = (ui_dir / rel).resolve()
+            if rel.startswith("cesium/"):                 # bundled 3D globe library: static, cacheable
+                if not str(f).startswith(str(ui_dir.resolve())) or not f.is_file():
+                    return self._send(404, b"not found", "text/plain")
+                body = f.read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", mimetypes.guess_type(str(f))[0] or "application/octet-stream")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "public, max-age=86400")
+                self.end_headers()
+                self.wfile.write(body)
+                return None
             if not str(f).startswith(str(ui_dir.resolve())) or not f.is_file():
                 if not (ui_dir / "index.html").is_file():
                     return self._send(404, b"UI not built: cd ui && npm install && npm run build",

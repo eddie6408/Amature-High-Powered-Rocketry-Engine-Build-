@@ -744,7 +744,7 @@ class JobManager:
             try:
                 res = fn(progress)
                 with self.lock:
-                    self.jobs[jid].update(status="done", result_id=res.get("id"))
+                    self.jobs[jid].update(status="done", result_id=res.get("id"), summary=res.get("summary"))
             except Exception as exc:
                 with self.lock:
                     self.jobs[jid].update(status="error", error=f"{exc}",

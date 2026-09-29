@@ -6,6 +6,7 @@ import { fmt } from "../components/scale";
 import { Card, ErrorBox, KindBadge, NumberField, SelectField, StatusPill, TextField } from "../components/ui";
 import { fmtCoords, locationError, parseCoord } from "../geo";
 import { go } from "../router";
+import { EarthView } from "./EarthView";
 
 interface WindProfile { altitudes: number[]; speeds: number[]; from_deg: number[] }
 interface Weather { wind_speed: number; wind_from_deg: number; gust_sigma: number; temperature_c: number;
@@ -185,7 +186,7 @@ export function LaunchPage({ missionId, motorKey }: { missionId?: string; motorK
       <ErrorBox error={err} />
       <div className="launch-grid">
         <div className="stack">
-          <Scene res={res} pad={pad} t={t} stage={stage} tMinus={tMinus} weather={w} />
+          <SceneCard res={res} pad={pad} t={t} stage={stage} tMinus={tMinus} weather={w} location={locOk ? { latitude: lat!, longitude: lon!, altitude_msl: loc.alt! } : null} />
           {res && (stage === "flight" || stage === "complete") && <Playback res={res} t={t} setT={setT} speed={speed} setSpeed={setSpeed}
             paused={paused} setPaused={setPaused} stage={stage} setStage={setStage} />}
           {res && (stage === "flight" || stage === "complete") && <Readouts res={res} t={t} />}
@@ -300,119 +301,243 @@ const EVENT_LABEL: Record<string, string> = { liftoff: "LIFTOFF", rail_exit: "RA
   landing: "TOUCHDOWN", ground_impact: "IMPACT" };
 const evLabel = (e: string) => EVENT_LABEL[e] ?? (e.startsWith("deploy:") ? `${e.slice(7).toUpperCase()} DEPLOYED` : e.toUpperCase());
 
+/* ------------------------------------------------------------------ scene card */
+type View = "2d" | "earth";
+function savedView(): View {
+  try { return localStorage.getItem("aerodyne-launch-view") === "earth" ? "earth" : "2d"; } catch { return "2d"; }
+}
+
+function SceneCard(props: { res: LaunchResult | null; pad: PadGeometry | null; t: number; stage: Stage; tMinus: number; weather: Weather;
+  location: { latitude: number; longitude: number; altitude_msl: number } | null }) {
+  const [view, setView] = useState<View>(savedView);
+  const pick = (v: View) => { setView(v); try { localStorage.setItem("aerodyne-launch-view", v); } catch { /* not remembered */ } };
+  return (
+    <div className="scene card">
+      <div className="scene-tabs" role="tablist" aria-label="Scene view">
+        <button role="tab" aria-selected={view === "2d"} className={view === "2d" ? "on" : ""} onClick={() => pick("2d")}>Illustrated</button>
+        <button role="tab" aria-selected={view === "earth"} className={view === "earth" ? "on" : ""} onClick={() => pick("earth")}>Earth 3D</button>
+      </div>
+      {view === "2d" ? <Scene {...props} /> : <EarthView {...props} />}
+    </div>
+  );
+}
+
 /* ---------------------------------------------------------------------- scene */
+const CLOUDS: Array<[number, number, number]> = [[0.12, 0.2, 1.1], [0.46, 0.12, 0.8], [0.78, 0.26, 1.3], [0.32, 0.36, 0.7], [0.93, 0.08, 0.9]];
+
 function Scene({ res, pad, t, stage, tMinus, weather }: { res: LaunchResult | null; pad: PadGeometry | null; t: number; stage: Stage; tMinus: number; weather: Weather }) {
-  const W = 900, H = 540;
+  const W = 1200, H = 640;
   const zoom = useRef(8);
   const onPad = !res || stage === "setup" || stage === "armed" || stage === "countdown" || stage === "hold" || stage === "failed";
   const fr = res && !onPad ? frameAt(res.frames, t) : null;
   const geo = res ?? pad;
   const len = geo?.length_m ?? 1.25;
+  const dia = geo?.diameter_m ?? 0.066;
   // camera: height of view in metres, smoothed
-  const target = fr ? Math.max(len * 5, fr.up * 1.7 + len * 6) : len * 5;
+  const target = fr ? Math.max(len * 4, fr.up * 1.7 + len * 6) : len * 4;
   zoom.current += (target - zoom.current) * (onPad ? 1 : 0.08);
   const Hv = zoom.current;
   const k = H / Hv;                                         // px per metre
   const east = fr?.east ?? 0;
   const up = fr?.up ?? 0;
-  const bottom = Math.max(-0.12 * Hv, up - 0.55 * Hv);
+  const bottom = Math.max(-0.14 * Hv, up - 0.55 * Hv);
   const X = (e: number) => W / 2 + (e - east) * k;
   const Y = (u: number) => H - (u - bottom) * k;
-  // rocket geometry: drawn at true scale, but never smaller than 70 px long
-  const rs = Math.max(k, 70 / len);
+  // rocket: true scale when close, never shorter than 90 px nor thinner than 11 px (fins stay readable)
+  const rs = Math.max(k, 90 / len);
+  const fat = Math.max(1, 11 / (dia * rs));
   const elev = ((res?.site.elevation_deg ?? weather.rail_elevation_deg) * Math.PI) / 180;
   const az = ((res?.site.azimuth_deg ?? (weather.launch_into_wind ? weather.wind_from_deg : weather.rail_azimuth_deg)) * Math.PI) / 180;
   const railE = Math.cos(elev) * Math.sin(az);
   let dx = fr ? fr.ax_e : railE, dy = fr ? fr.ax_u : Math.sin(elev);
   const phaseName = fr && res ? res.phases[fr.phase] : "pad";
   const deployed = res && fr ? res.events.filter(([te, e]) => e.startsWith("deploy:") && te <= t).map(([, e]) => e.slice(7)) : [];
-  if (deployed.length) { dx = 0.35; dy = 1; }               // hangs under canopy
+  if (deployed.length) { dx = 0.3; dy = 1; }                // hangs under canopy
   const n = Math.hypot(dx, dy) || 1; dx /= n; dy /= n;
-  // anchor: aft end at the sim origin on the pad
-  const baseE = east, baseU = up;
+  const baseX = X(east), baseY = Y(up);                     // aft end of the rocket
   const toScreen = (xb: number, yb: number): [number, number] => {
-    const along = (len - xb);                              // distance forward of the aft end
-    const px = X(baseE) + (along * dx - yb * dy) * rs;
-    const py = Y(baseU) - (along * dy + yb * dx) * rs;
-    return [px, py];
+    const along = len - xb;                                 // distance forward of the aft end
+    const yy = yb * fat;
+    return [baseX + (along * dx - yy * dy) * rs, baseY - (along * dy + yy * dx) * rs];
   };
-  const shapes = (geo?.profile ?? []).filter((s) => s.kind !== "internal");
-  const flameLen = fr && fr.thrust > 0 ? (0.25 + 0.6 * fr.thrust / (res!.peak_thrust || 1)) * len * rs * (0.9 + 0.2 * Math.random()) : 0;
+  const shapes = (geo?.profile ?? []).filter((s) => s.kind === "body" || s.kind === "fin");
+  const noseIdx = shapes.findIndex((s) => s.kind === "body");
+  const radPx = (dia / 2) * fat * rs;
   const [ax0, ay0] = toScreen(len, 0);
-  // smoke trail
-  const trail: string[] = [];
+  const [nx0, ny0] = toScreen(0, 0);
+  const thrustFrac = fr && fr.thrust > 0 ? fr.thrust / (res!.peak_thrust || 1) : 0;
+  const flicker = 0.9 + 0.2 * Math.abs(Math.sin(t * 53));
+  const flameLen = thrustFrac > 0 ? (0.35 + 0.9 * thrustFrac) * len * rs * flicker : 0;
+  // body-normal for the shading gradient
+  const gx1 = ax0 - dy * radPx, gy1 = ay0 - dx * radPx, gx2 = ax0 + dy * radPx, gy2 = ay0 + dx * radPx;
+
+  // smoke: puffs laid along the powered/coast track, growing and drifting downwind with age
+  const puffs: Array<[number, number, number, number]> = [];
   if (res && fr) {
     const f = res.frames;
-    const tEnd = Math.min(t, (res.events.find(([, e]) => e === "apogee")?.[0] ?? t));
-    for (let tt = 0; tt <= tEnd; tt += 0.25) {
+    const tEnd = Math.min(t, res.events.find(([, e]) => e === "apogee")?.[0] ?? t);
+    const burnout = res.events.find(([, e]) => e === "burnout")?.[0] ?? tEnd;
+    for (let tt = 0; tt <= tEnd; tt += 0.12) {
       const g = frameAt(f, tt);
-      if (res.phases[g.phase] === "descent" || res.phases[g.phase] === "landed") break;
-      trail.push(`${X(g.east).toFixed(1)},${Y(g.up).toFixed(1)}`);
+      const age = t - tt;
+      const dense = tt <= burnout ? 1 : Math.max(0, 1 - (tt - burnout) / 2.5);   // thins out after burnout
+      if (dense <= 0.02) continue;
+      const r = (dia * 2.2 + age * 0.9) * k + 3 + Math.min(12, age * 3);
+      puffs.push([X(g.east + g.wind_e * age * 0.6), Y(g.up + 0.2 * age), r, Math.max(0, 0.55 * dense * (1 - age / 40))]);
     }
   }
+  const landingX = res && fr && deployed.length ? X(res.frames.east[res.frames.east.length - 1]) : null;
   const recent = res && fr ? res.events.filter(([te]) => te <= t && t - te < 2.5) : [];
   const ticks = niceAlt(bottom, bottom + Hv);
   const windAt = fr ? Math.hypot(fr.wind_e, fr.wind_n) : weather.wind_speed;
   const windTo = ((weather.wind_from_deg + 180) * Math.PI) / 180;
+  const windDriftPx = (weather.wind_speed * t * 4) % (W * 1.4);
+  const skyDark = Math.min(0.55, up / 9000);                // deeper blue with altitude
+  const railLen = Math.max(geo?.site.rail_length ?? 2, 1) * rs;
+  const padX = X(0), padY = Y(0);
+  const hillY = Y(0) - 26 - Math.min(120, Hv * 0.02 * k);
+  const railTop: [number, number] = [padX + railE * railLen, padY - 10 - Math.sin(elev) * railLen];
+  const clock = fr ? `T+${fmtClock(t)}` : stage === "countdown" || stage === "hold" ? `T-${fmtClock(tMinus)}` : "T-00:00.0";
   return (
-    <div className="scene card">
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label={`Launch scene, ${phaseName}, altitude ${fmt(up)} m`}>
-        <defs>
-          <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stopColor="var(--sky-top)" /><stop offset="1" stopColor="var(--sky-bottom)" />
-          </linearGradient>
-          <linearGradient id="flame" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0" stopColor="#fff6c8" /><stop offset="0.4" stopColor="#ffb13b" /><stop offset="1" stopColor="#ff5a1f" stopOpacity="0" />
-          </linearGradient>
-        </defs>
-        <rect x="0" y="0" width={W} height={H} fill="url(#sky)" />
-        {ticks.map((a) => (
-          <g key={a} className="alt-tick"><line x1={0} x2={W} y1={Y(a)} y2={Y(a)} /><text x={8} y={Y(a) - 4}>{fmt(a)} m</text></g>
-        ))}
-        <rect x="0" y={Y(0)} width={W} height={Math.max(0, H - Y(0))} className="ground" />
-        {/* pad and rail */}
-        <line className="rail" x1={X(0)} y1={Y(0)} x2={X(0) + railE * Math.max(geo?.site.rail_length ?? 2, 1) * Math.max(k, 70 / len) / Math.max(1, 1)}
-              y2={Y(0) - Math.sin(elev) * Math.max(geo?.site.rail_length ?? 2, 1) * Math.max(k, 70 / len)} />
-        <rect className="pad" x={X(0) - 18} y={Y(0) - 4} width={36} height={6} rx={2} />
-        {trail.length > 1 && <polyline className="smoke" points={trail.join(" ")} />}
-        {/* parachutes */}
-        {deployed.map((name, i) => {
-          const dev = res!.recovery.find((r) => r.name === name);
-          const r = Math.max(14, (dev?.diameter ?? 0.5) * 0.5 * rs);
-          const [cx, cy] = toScreen(0, 0);
-          const top = cy - (40 + i * 26);
-          return (
-            <g key={name} className="chute">
-              <path d={`M${cx - r},${top} A${r},${r * 0.75} 0 0 1 ${cx + r},${top} Z`} className={i === 0 ? "canopy1" : "canopy2"} />
-              <line x1={cx - r} y1={top} x2={cx} y2={cy} /><line x1={cx + r} y1={top} x2={cx} y2={cy} />
-            </g>
-          );
-        })}
-        {/* flame */}
-        {flameLen > 0 && (
-          <polygon fill="url(#flame)" points={`${ax0 - dy * 5},${ay0 - dx * 5} ${ax0 + dy * 5},${ay0 + dx * 5} ${ax0 - dx * flameLen},${ay0 + dy * flameLen}`} />
-        )}
-        {/* rocket from the design profile */}
-        {shapes.map((s, i) => (
-          <polygon key={i} className={`shape-${s.kind}`} points={s.points.map(([xb, yb]) => toScreen(xb, yb).join(",")).join(" ")} />
-        ))}
-        {/* wind indicator */}
-        <g transform="translate(830,60)" className="windsock">
-          <circle r="34" />
-          <line x1={-Math.sin(windTo) * 24} y1={Math.cos(windTo) * 24} x2={Math.sin(windTo) * 24} y2={-Math.cos(windTo) * 24} markerEnd="" />
-          <circle cx={Math.sin(windTo) * 24} cy={-Math.cos(windTo) * 24} r="4" />
-          <text y="52" textAnchor="middle">{fmt(windAt, 1)} m/s</text>
-          <text y="-40" textAnchor="middle">N</text>
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" shapeRendering="geometricPrecision"
+         aria-label={`Launch scene, ${phaseName}, altitude ${fmt(up)} m`}>
+      <defs>
+        <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#1f5fae" /><stop offset="0.55" stopColor="#5d9bdc" /><stop offset="1" stopColor="#d6e9f7" />
+        </linearGradient>
+        <linearGradient id="ground" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#6e8e45" /><stop offset="1" stopColor="#3f5a28" />
+        </linearGradient>
+        <linearGradient id="hills" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#7d93a8" /><stop offset="1" stopColor="#9fb3c4" />
+        </linearGradient>
+        <linearGradient id="body" gradientUnits="userSpaceOnUse" x1={gx1} y1={gy1} x2={gx2} y2={gy2}>
+          <stop offset="0" stopColor="#8e9aa4" /><stop offset="0.35" stopColor="#ffffff" /><stop offset="0.7" stopColor="#dfe5ea" /><stop offset="1" stopColor="#7c8893" />
+        </linearGradient>
+        <linearGradient id="nose" gradientUnits="userSpaceOnUse" x1={gx1} y1={gy1} x2={gx2} y2={gy2}>
+          <stop offset="0" stopColor="#0b6f60" /><stop offset="0.4" stopColor="#35e0c2" /><stop offset="1" stopColor="#08584c" />
+        </linearGradient>
+        <linearGradient id="fin" gradientUnits="userSpaceOnUse" x1={gx1} y1={gy1} x2={gx2} y2={gy2}>
+          <stop offset="0" stopColor="#0f1a22" /><stop offset="0.5" stopColor="#2b3a46" /><stop offset="1" stopColor="#0f1a22" />
+        </linearGradient>
+        <radialGradient id="glow"><stop offset="0" stopColor="#fff3c4" stopOpacity="0.9" /><stop offset="1" stopColor="#ff8a2a" stopOpacity="0" /></radialGradient>
+        <linearGradient id="flameOuter" gradientUnits="userSpaceOnUse" x1={ax0} y1={ay0} x2={ax0 - dx * flameLen} y2={ay0 + dy * flameLen}>
+          <stop offset="0" stopColor="#ffd35a" /><stop offset="0.5" stopColor="#ff7a1f" stopOpacity="0.85" /><stop offset="1" stopColor="#ff3d00" stopOpacity="0" />
+        </linearGradient>
+        <linearGradient id="flameCore" gradientUnits="userSpaceOnUse" x1={ax0} y1={ay0} x2={ax0 - dx * flameLen * 0.55} y2={ay0 + dy * flameLen * 0.55}>
+          <stop offset="0" stopColor="#ffffff" /><stop offset="1" stopColor="#fff1a8" stopOpacity="0" />
+        </linearGradient>
+        <filter id="soft" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="2.2" /></filter>
+      </defs>
+      <rect x="0" y="0" width={W} height={H} fill="url(#sky)" />
+      <rect x="0" y="0" width={W} height={H} fill="#061a3a" opacity={skyDark} />
+      {/* clouds drift with the wind */}
+      {CLOUDS.map(([cx, cy, sc], i) => {
+        const span = W * 1.4;
+        const x = (((cx * span + (Math.sin(windTo) >= 0 ? 1 : -1) * windDriftPx) % span) + span) % span - W * 0.2;
+        const y = cy * H + (up * k * 0.08) % H;
+        return (
+          <g key={i} opacity={0.85} filter="url(#soft)">
+            <ellipse cx={x} cy={y} rx={70 * sc} ry={18 * sc} fill="#ffffff" />
+            <ellipse cx={x + 30 * sc} cy={y - 12 * sc} rx={40 * sc} ry={16 * sc} fill="#ffffff" />
+            <ellipse cx={x - 34 * sc} cy={y - 6 * sc} rx={34 * sc} ry={13 * sc} fill="#f4f8fb" />
+          </g>
+        );
+      })}
+      {ticks.map((a) => (
+        <g key={a} className="alt-tick"><line x1={0} x2={W} y1={Y(a)} y2={Y(a)} /><text x={W - 12} y={Y(a) - 5} textAnchor="end">{fmt(a)} m</text></g>
+      ))}
+      {/* distant hills and the field */}
+      {hillY < H && <path d={`M0,${hillY + 18} C${W * 0.15},${hillY - 14} ${W * 0.3},${hillY + 10} ${W * 0.45},${hillY} S${W * 0.75},${hillY - 22} ${W},${hillY + 6} L${W},${padY} L0,${padY} Z`} fill="url(#hills)" opacity={0.9} />}
+      <rect x="0" y={padY} width={W} height={Math.max(0, H - padY)} fill="url(#ground)" />
+      {padY < H && Array.from({ length: 24 }, (_, i) => (
+        <line key={i} className="furrow" x1={((i * 97 - east * k) % W + W) % W} y1={padY + 4 + (i % 5) * 7} x2={((i * 97 - east * k) % W + W) % W + 18} y2={padY + 4 + (i % 5) * 7} />
+      ))}
+      {/* pad: blast plate, tripod stand and rail */}
+      {padY < H + 20 && (
+        <g className="pad-hw">
+          <line x1={padX} y1={padY - 10} x2={padX - 22} y2={padY} /><line x1={padX} y1={padY - 10} x2={padX + 22} y2={padY} />
+          <line x1={padX} y1={padY - 10} x2={padX + 4} y2={padY + 2} />
+          <rect x={padX - 16} y={padY - 13} width={32} height={4} rx={1} className="plate" />
+          <line className="rail" x1={padX} y1={padY - 10} x2={railTop[0]} y2={railTop[1]} />
+          <circle cx={padX + 70} cy={padY - 3} r={3} className="flag" />
+          <line x1={padX + 70} y1={padY} x2={padX + 70} y2={padY - 22} className="pole" />
+          <path d={`M${padX + 70},${padY - 22} l14,4 l-14,4 Z`} className="flag" />
         </g>
-        {recent.map(([te, e], i) => (
-          <text key={e} className="event-flash" x={W / 2 + 60} y={120 + i * 26} opacity={Math.max(0, 1 - (t - te) / 2.5)}>{evLabel(e)}</text>
+      )}
+      {landingX !== null && <g className="landing-mark"><line x1={landingX - 7} y1={padY - 7} x2={landingX + 7} y2={padY + 7} /><line x1={landingX - 7} y1={padY + 7} x2={landingX + 7} y2={padY - 7} /></g>}
+      {/* smoke */}
+      {puffs.map(([px, py, r, o], i) => <circle key={i} cx={px} cy={py} r={r} fill="#f2f2f0" opacity={o} />)}
+      {/* parachutes */}
+      {deployed.map((name, i) => {
+        const dev = res!.recovery.find((r) => r.name === name);
+        const r = Math.max(16, (dev?.diameter ?? 0.5) * 0.5 * rs);
+        const top = ny0 - (46 + i * 30) - r * 0.4;
+        const gores = 6;
+        return (
+          <g key={name} className="chute">
+            {Array.from({ length: gores }, (_, g) => {
+              const a0 = Math.PI + (g / gores) * Math.PI, a1 = Math.PI + ((g + 1) / gores) * Math.PI;
+              return <path key={g} d={`M${nx0},${top} L${nx0 + r * Math.cos(a0)},${top + r * 0.7 * Math.sin(a0)} A${r},${r * 0.7} 0 0 1 ${nx0 + r * Math.cos(a1)},${top + r * 0.7 * Math.sin(a1)} Z`}
+                           fill={g % 2 ? (i === 0 ? "#ff5a4f" : "#ffb020") : "#ffffff"} />;
+            })}
+            <line x1={nx0 - r} y1={top} x2={nx0} y2={ny0} /><line x1={nx0 + r} y1={top} x2={nx0} y2={ny0} />
+            <line x1={nx0 - r * 0.4} y1={top} x2={nx0} y2={ny0} /><line x1={nx0 + r * 0.4} y1={top} x2={nx0} y2={ny0} />
+          </g>
+        );
+      })}
+      {/* flame */}
+      {flameLen > 0 && (
+        <g>
+          <circle cx={ax0 - dx * flameLen * 0.2} cy={ay0 + dy * flameLen * 0.2} r={radPx * 3.2 + flameLen * 0.18} fill="url(#glow)" />
+          <polygon fill="url(#flameOuter)" points={`${ax0 - dy * radPx * 0.85},${ay0 - dx * radPx * 0.85} ${ax0 + dy * radPx * 0.85},${ay0 + dx * radPx * 0.85} ${ax0 - dx * flameLen},${ay0 + dy * flameLen}`} />
+          <polygon fill="url(#flameCore)" points={`${ax0 - dy * radPx * 0.45},${ay0 - dx * radPx * 0.45} ${ax0 + dy * radPx * 0.45},${ay0 + dx * radPx * 0.45} ${ax0 - dx * flameLen * 0.55},${ay0 + dy * flameLen * 0.55}`} />
+        </g>
+      )}
+      {/* rocket, from the design profile */}
+      <g className="rocket">
+        {shapes.map((s, i) => (
+          <polygon key={i} fill={s.kind === "fin" ? "url(#fin)" : i === noseIdx ? "url(#nose)" : "url(#body)"}
+                   points={s.points.map(([xb, yb]) => toScreen(xb, yb).map((v) => v.toFixed(1)).join(",")).join(" ")} />
         ))}
-        {(stage === "countdown" || stage === "hold") && <text className="big-count" x={W / 2} y={H / 2} textAnchor="middle">T-{tMinus}{stage === "hold" ? " HOLD" : ""}</text>}
-        {stage === "setup" && <text className="scene-note" x={W / 2} y={40} textAnchor="middle">{res ? "" : "Complete the checklist, arm, and start the countdown"}</text>}
-        <text className="scene-note" x={12} y={H - 10}>{phaseName.toUpperCase()} · simulated · not to scale when zoomed out</text>
-      </svg>
-    </div>
+        <polygon className="nozzle" points={[toScreen(len, dia * 0.28), toScreen(len + dia * 0.35, dia * 0.34), toScreen(len + dia * 0.35, -dia * 0.34), toScreen(len, -dia * 0.28)].map((p) => p.map((v) => v.toFixed(1)).join(",")).join(" ")} />
+      </g>
+      {/* wind indicator */}
+      <g transform={`translate(${W - 170},96) scale(1.3)`} className="windsock">
+        <circle r="38" />
+        <line x1={-Math.sin(windTo) * 26} y1={Math.cos(windTo) * 26} x2={Math.sin(windTo) * 26} y2={-Math.cos(windTo) * 26} />
+        <path d="M0,-9 L6,6 L-6,6 Z" transform={`translate(${Math.sin(windTo) * 26},${-Math.cos(windTo) * 26}) rotate(${(windTo * 180) / Math.PI})`} className="arrow" />
+        <text y="-44" textAnchor="middle">N</text>
+        <text y="58" textAnchor="middle">{fmt(windAt, 1)} m/s</text>
+      </g>
+      {recent.map(([te, e], i) => (
+        <text key={e} className="event-flash" x={W / 2 + 80} y={140 + i * 30} opacity={Math.max(0, 1 - (t - te) / 2.5)}>{evLabel(e)}</text>
+      ))}
+      {(stage === "countdown" || stage === "hold") && (
+        <g>
+          <rect x={W / 2 - 170} y={H / 2 - 78} width={340} height={116} rx={16} className="count-panel" />
+          <text className="big-count" x={W / 2} y={H / 2 + 8} textAnchor="middle">T-{tMinus}</text>
+          {stage === "hold" && <text className="hold" x={W / 2} y={H / 2 + 30} textAnchor="middle">HOLD</text>}
+        </g>
+      )}
+      {stage === "setup" && !res && <text className="scene-note top" x={W / 2} y={44} textAnchor="middle">Complete the checklist, arm, and start the countdown</text>}
+      {/* broadcast-style overlay */}
+      <g className="hud" transform={`translate(18,${H - 86}) scale(1.5)`}>
+        <rect width={430} height={46} rx={10} />
+        <text x={16} y={29} className="hud-big">{clock}</text>
+        <text x={170} y={19}>ALTITUDE</text><text x={170} y={37} className="hud-val">{fmt(up)} m</text>
+        <text x={262} y={19}>SPEED</text><text x={262} y={37} className="hud-val">{fmt(fr?.speed ?? 0)} m/s</text>
+        <text x={352} y={19}>{phaseName.toUpperCase()}</text><text x={352} y={37} className="hud-val">{fmt(fr?.mach ?? 0, 2)} M</text>
+      </g>
+      <text className="scene-note" x={W - 14} y={H - 12} textAnchor="end">SIMULATED · rocket enlarged when zoomed out</text>
+    </svg>
   );
+}
+
+function fmtClock(s: number): string {
+  const m = Math.floor(Math.abs(s) / 60);
+  const sec = Math.abs(s) - m * 60;
+  return `${String(m).padStart(2, "0")}:${sec.toFixed(1).padStart(4, "0")}`;
 }
 
 function niceAlt(lo: number, hi: number): number[] {
